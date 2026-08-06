@@ -1,7 +1,6 @@
 import { supabase } from './supabase';
 
 export type WimpyPlan = 'Free' | 'Pro';
-export type WimpyPaymentStatus = 'paid' | 'failed' | 'pending';
 
 export function buildWimpyIDLoginUrl(appUrl: string, mode: 'login' | 'signup' = 'login') {
   const redirectUrl = new URL(appUrl);
@@ -9,9 +8,8 @@ export function buildWimpyIDLoginUrl(appUrl: string, mode: 'login' | 'signup' = 
 }
 
 export function buildWimpyPayUrl(appUrl: string, plan: WimpyPlan = 'Pro') {
-  const redirectUrl = new URL(appUrl);
+  const redirectUrl = new URL('/wimpy-pay/complete', appUrl);
   redirectUrl.searchParams.set('plan', plan);
-  redirectUrl.searchParams.set('payment_status', 'paid');
   return `https://pay.wimpy-corp.com.ng/checkout?redirect=${encodeURIComponent(redirectUrl.toString())}&plan=${plan}`;
 }
 
