@@ -10,14 +10,6 @@ export default function WimpyPayCompletePage() {
 
   useEffect(() => {
     const verifySubscription = async () => {
-      const params = new URLSearchParams(window.location.search);
-      const transactionId = params.get('transaction_id');
-
-      if (!transactionId) {
-        setMessage('Missing transaction information. Please retry from the checkout flow.');
-        return;
-      }
-
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
 
@@ -33,7 +25,7 @@ export default function WimpyPayCompletePage() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ transactionId }),
+          body: JSON.stringify({ plan: 'Pro' }),
         });
         const data = await response.json();
 

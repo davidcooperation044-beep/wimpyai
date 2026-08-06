@@ -8,7 +8,7 @@ export function buildWimpyIDLoginUrl(appUrl: string, mode: 'login' | 'signup' = 
 }
 
 export function buildWimpyPayUrl(appUrl: string, plan: WimpyPlan = 'Pro') {
-  const redirectUrl = new URL('/wimpy-pay/complete', appUrl);
+  const redirectUrl = new URL('/wimpy-pay', appUrl);
   redirectUrl.searchParams.set('plan', plan);
   return `https://pay.wimpy-corp.com.ng/checkout?redirect=${encodeURIComponent(redirectUrl.toString())}&plan=${plan}`;
 }
@@ -41,27 +41,7 @@ export async function bootstrapWimpyIDSession() {
   return {
     displayName,
     wimpyId: user.id,
-    plan: user.user_metadata?.plan === 'Pro' ? 'Pro' : 'Free',
+    plan: user.app_metadata?.plan === 'Pro' ? 'Pro' : 'Free',
   };
 }
 
-export function bootstrapWimpyPaySession() {
-  if (typeof window === 'undefined') return null;
-  const params = new URLSearchParams(window.location.search);
-  const paymentStatus = params.get('payment_status') as WimpyPaymentStatus | null;
-  const plan = params.get('plan') as WimpyPlan | null;
-
-  if (paymentStatus) {
-    const cleaned = new URL(window.location.href);
-    cleaned.searchParams.delete('payment_status');
-    cleaned.searchParams.delete('plan');
-    window.history.replaceState({}, '', cleaned.pathname + cleaned.search);
-
-    return {
-      paymentStatus,
-      plan: plan === 'Pro' ? 'Pro' : 'Free',
-    };
-  }
-
-  return null;
-}
