@@ -380,7 +380,7 @@ export default function HomePage() {
   const handleWimpyIDLogin = (mode: 'login' | 'signup' = 'login') => {
     if (typeof window === 'undefined') return;
     const url = buildWimpyIDLoginUrl(window.location.origin, mode);
-    window.open(url, '_blank', 'noopener,noreferrer');
+    window.location.href = url;
   };
 
   const handleSubscriptionToggle = () => {
