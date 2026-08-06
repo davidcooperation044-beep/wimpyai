@@ -9,9 +9,10 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Sparkles, Plus, Moon, SunMedium, SendHorizontal, ShieldCheck, UserCircle2 } from 'lucide-react';
+import { Copy, Sparkles, Plus, Moon, SunMedium, SendHorizontal, ShieldCheck, UserCircle2, Mic2 } from 'lucide-react';
 import 'katex/dist/katex.min.css';
-import { buildWimpyIDLoginUrl, buildWimpyPayUrl, bootstrapWimpyIDSession, bootstrapWimpyPaySession } from '@/lib/auth';
+import { buildWimpyIDLoginUrl, buildWimpyPayUrl, bootstrapWimpyIDSession } from '@/lib/auth';
+import { supabase } from '@/lib/supabase';
 
 type MessageRole = 'assistant' | 'user' | 'system';
 
@@ -21,6 +22,7 @@ type Message = {
   content: string;
   image?: string;
   imageUrl?: string;
+  images?: string[];
 };
 
 type Conversation = {
@@ -87,9 +89,15 @@ function loadJson<T>(key: string, fallback: T): T {
     const saved = window.localStorage.getItem(key);
     if (!saved) return fallback;
     return JSON.parse(saved) as T;
-  } catch {
+  } catch (error) {
     return fallback;
   }
+}
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export default function HomePage() {
@@ -117,12 +125,12 @@ export default function HomePage() {
   const [activeConversationId, setActiveConversationId] = useState(initialConversation.id);
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [inputImage, setInputImage] = useState<string | null>(null);
-  const [inputImageName, setInputImageName] = useState('');
-  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [attachments, setAttachments] = useState<Array<{ name: string; type: string; src: string }>>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSupported, setRecordingSupported] = useState(false);
+  const [transcript, setTranscript] = useState('');
   const [profile, setProfile] = useState<ProfileState>(() => loadJson<ProfileState>('wimpyai-profile-v1', emptyProfile));
   const [settings, setSettings] = useState<SettingsState>(() => loadJson<SettingsState>('wimpyai-settings-v1', emptySettings));
-  const [authForm, setAuthForm] = useState({ name: '', email: '' });
   const [showAuthModal, setShowAuthModal] = useState(() => {
     if (typeof window === 'undefined') return false;
     const dismissed = window.localStorage.getItem('wimpyai-auth-dismissed-v1');
@@ -135,7 +143,7 @@ export default function HomePage() {
     [conversations, activeConversationId]
   );
 
-  const isBusy = isStreaming || isGeneratingImage;
+  const isBusy = isStreaming || isRecording;
   const pendingAssistantMessage = activeConversation?.messages[activeConversation.messages.length - 1];
 
   useEffect(() => {
@@ -173,33 +181,30 @@ export default function HomePage() {
     };
     window.addEventListener('storage', storageListener);
 
-    const authResult = bootstrapWimpyIDSession();
-    const payResult = bootstrapWimpyPaySession();
-    if (authResult) {
-      setProfile((prev) => ({
-        ...prev,
-        isConnected: true,
-        userId: authResult.wimpyId,
-        displayName: authResult.displayName,
-        avatarInitials: authResult.displayName
-          .split(' ')
-          .filter(Boolean)
-          .slice(0, 2)
-          .map((part) => part[0].toUpperCase())
-          .join('') || 'W',
-        lastLogin: new Date().toISOString(),
-      }));
-      setShowAuthModal(false);
-      window.localStorage.setItem('wimpyai-auth-dismissed-v1', 'true');
+    async function initializeAuth() {
+      const authResult = await bootstrapWimpyIDSession();
+      if (authResult) {
+        setProfile((prev) => ({
+          ...prev,
+          isConnected: true,
+          userId: authResult.wimpyId,
+          displayName: authResult.displayName,
+          avatarInitials: authResult.displayName
+            .split(' ')
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((part) => part[0].toUpperCase())
+            .join('') || 'W',
+          plan: authResult.plan === 'Pro' ? 'Pro' : 'Free',
+          subscriptionStatus: authResult.plan === 'Pro' ? 'active' : prev.subscriptionStatus,
+          lastLogin: new Date().toISOString(),
+        }));
+        setShowAuthModal(false);
+        window.localStorage.setItem('wimpyai-auth-dismissed-v1', 'true');
+      }
     }
-    if (payResult && payResult.paymentStatus === 'paid') {
-      setProfile((prev) => ({
-        ...prev,
-        isConnected: true,
-        plan: payResult.plan as 'Free' | 'Pro',
-        subscriptionStatus: 'active',
-      }));
-    }
+
+    void initializeAuth();
 
     return () => {
       window.removeEventListener('wimpy-profile-sync', handleProfileSync);
@@ -224,31 +229,6 @@ export default function HomePage() {
     setActiveConversationId(newConversation.id);
   };
 
-  const handleAuthSubmit = (mode: 'signin' | 'signup') => {
-    if (!authForm.name.trim()) return;
-    const name = authForm.name.trim();
-    const initials = name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase() ?? '')
-      .join('') || 'U';
-    const userId = `wpy-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    setProfile((prev) => ({
-      ...prev,
-      isConnected: true,
-      userId,
-      displayName: name,
-      avatarInitials: initials,
-      lastLogin: new Date().toISOString(),
-    }));
-    setAuthForm({ name: '', email: '' });
-    setShowAuthModal(false);
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem('wimpyai-auth-dismissed-v1', 'true');
-    }
-  };
-
   const handleCloseWelcome = () => {
     setShowAuthModal(false);
     if (typeof window !== 'undefined') {
@@ -257,105 +237,110 @@ export default function HomePage() {
   };
 
   const sendMessage = async () => {
-    if ((!draft.trim() && !inputImage) || isStreaming) return;
+    if ((!draft.trim() && !attachments.length) || isStreaming) return;
     const content = draft.trim();
-    const userMessage: Message = { id: `msg-${Date.now()}`, role: 'user', content: content || 'Image uploaded', image: inputImage || undefined };
+    const userMessage: Message = {
+      id: `msg-${Date.now()}`,
+      role: 'user',
+      content: content || (attachments.length > 0 ? `Please describe the attached image${attachments.length > 1 ? 's' : ''}.` : ''),
+      images: attachments.map((attachment) => attachment.src),
+    };
     const assistantId = `msg-${Date.now() + 1}`;
+
     setConversations((prev) =>
       prev.map((conversation) =>
         conversation.id === activeConversationId
           ? {
               ...conversation,
-              title: conversation.messages.length === 1 && conversation.title === 'New chat' ? (content || inputImageName || 'Image').slice(0, 40) : conversation.title,
+              title:
+                conversation.messages.length === 1 && conversation.title === 'New chat'
+                  ? (content || attachments[0]?.name || 'New chat').slice(0, 40)
+                  : conversation.title,
               messages: [...conversation.messages, userMessage, { id: assistantId, role: 'assistant', content: '' }],
             }
           : conversation
       )
     );
+
     setDraft('');
-    setInputImage(null);
-    setInputImageName('');
+    setAttachments([]);
     setIsStreaming(true);
 
     try {
-      const response = await fetch(inputImage ? '/api/upload-image' : '/api/chat', {
+      const authHeaders = await getAuthHeaders();
+      const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: inputImage ? {} : { 'Content-Type': 'application/json' },
-        body: inputImage
-          ? JSON.stringify({ prompt: content || 'Describe this image.', image: inputImage, persona: mode })
-          : JSON.stringify({ prompt: content, persona: mode }),
+        headers: {
+          ...authHeaders,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt: content,
+          persona: mode,
+          attachments: attachments.map((attachment) => ({
+            url: attachment.src,
+            filename: attachment.name,
+            type: attachment.type,
+          })),
+        }),
       });
 
       if (!response.ok) {
         throw new Error('Unable to reach the chat API.');
       }
 
-      if (inputImage) {
-        const payload = await response.json();
-        setConversations((prev) =>
-          prev.map((conversation) =>
-            conversation.id === activeConversationId
-              ? {
-                  ...conversation,
-                  messages: conversation.messages.map((message: Message) =>
-                    message.id === assistantId ? { ...message, content: payload.analysis || 'I could not analyze that image.' } : message
-                  ),
-                }
-              : conversation
-          )
-        );
-      } else {
-        if (!response.body) {
-          throw new Error('Unable to reach the chat API.');
-        }
+      if (!response.body) {
+        throw new Error('Unable to reach the chat API.');
+      }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let accumulated = '';
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulated = '';
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split('\n\n');
-          buffer = parts.pop() || '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-          for (const part of parts) {
-            if (!part.startsWith('data:')) continue;
-            const payload = part.slice(5).trim();
-            if (payload === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(payload);
-              const delta = parsed.delta || '';
-              if (delta) {
-                accumulated += delta;
-                setConversations((prev) =>
-                  prev.map((conversation) =>
-                    conversation.id === activeConversationId
-                      ? {
-                          ...conversation,
-                          messages: conversation.messages.map((message: Message) =>
-                            message.id === assistantId ? { ...message, content: accumulated } : message
-                          ),
-                        }
-                      : conversation
-                  )
-                );
-              }
-            } catch {
-              // ignore malformed chunk
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() || '';
+
+        for (const part of parts) {
+          if (!part.startsWith('data:')) continue;
+          const payload = part.slice(5).trim();
+          if (payload === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(payload);
+            const delta = parsed.delta || '';
+            if (delta) {
+              accumulated += delta;
+              setConversations((prev) =>
+                prev.map((conversation) =>
+                  conversation.id === activeConversationId
+                    ? {
+                        ...conversation,
+                        messages: conversation.messages.map((message) =>
+                          message.id === assistantId ? { ...message, content: accumulated } : message
+                        ),
+                      }
+                    : conversation
+                )
+              );
             }
+          } catch (error) {
+            // ignore malformed chunk
           }
         }
       }
-    } catch {
+    } catch (error) {
       setConversations((prev) =>
         prev.map((conversation) =>
           conversation.id === activeConversationId
             ? {
                 ...conversation,
-                messages: conversation.messages.map((message: Message) =>
+                messages: conversation.messages.map((message) =>
                   message.id === assistantId ? { ...message, content: 'I could not generate a reply right now.' } : message
                 ),
               }
@@ -374,15 +359,22 @@ export default function HomePage() {
     }
   };
 
-  const handleImageSelect = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setInputImage(typeof reader.result === 'string' ? reader.result : null);
-      setInputImageName(file.name);
-    };
-    reader.readAsDataURL(file);
+  const handleAttachmentSelect = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files?.length) return;
+
+    const nextAttachments: Array<{ name: string; type: string; src: string }> = [];
+    for (const file of Array.from(files)) {
+      const reader = new FileReader();
+      const src = await new Promise<string>((resolve) => {
+        reader.onloadend = () => {
+          resolve(typeof reader.result === 'string' ? reader.result : '');
+        };
+        reader.readAsDataURL(file);
+      });
+      nextAttachments.push({ name: file.name, type: file.type, src });
+    }
+    setAttachments((prev) => [...prev, ...nextAttachments]);
   };
 
   const handleWimpyIDLogin = (mode: 'login' | 'signup' = 'login') => {
@@ -419,61 +411,6 @@ export default function HomePage() {
     }));
   };
 
-  const generateImage = async () => {
-    if (!draft.trim() || isGeneratingImage) return;
-    const prompt = draft.trim();
-    setDraft('');
-    setIsGeneratingImage(true);
-    const userMessage: Message = { id: `msg-${Date.now()}`, role: 'user', content: `Generate: ${prompt}` };
-    const assistantId = `msg-${Date.now() + 1}`;
-    setConversations((prev) =>
-      prev.map((conversation) =>
-        conversation.id === activeConversationId
-          ? {
-              ...conversation,
-              title: conversation.messages.length === 1 && conversation.title === 'New chat' ? prompt.slice(0, 40) : conversation.title,
-              messages: [...conversation.messages, userMessage, { id: assistantId, role: 'assistant', content: '', imageUrl: '' }],
-            }
-          : conversation
-      )
-    );
-
-    try {
-      const response = await fetch('/api/image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, persona: mode }),
-      });
-      const payload = await response.json();
-      setConversations((prev) =>
-        prev.map((conversation) =>
-          conversation.id === activeConversationId
-            ? {
-                ...conversation,
-                messages: conversation.messages.map((message: Message) =>
-                  message.id === assistantId ? { ...message, content: payload.alt || 'Image ready.', imageUrl: payload.imageUrl || '' } : message
-                ),
-              }
-            : conversation
-        )
-      );
-    } catch {
-      setConversations((prev) =>
-        prev.map((conversation) =>
-          conversation.id === activeConversationId
-            ? {
-                ...conversation,
-                messages: conversation.messages.map((message: Message) =>
-                  message.id === assistantId ? { ...message, content: 'Image generation failed.' } : message
-                ),
-              }
-            : conversation
-        )
-      );
-    } finally {
-      setIsGeneratingImage(false);
-    }
-  };
 
   return (
     <main className={settings.darkMode ? 'dark' : ''}>
@@ -606,10 +543,20 @@ export default function HomePage() {
               </div>
 
               <div className="shrink-0 rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-3 shadow-sm">
-                {inputImage ? (
-                  <div className="mb-3 flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm">
-                    <span>Attached: {inputImageName}</span>
-                    <button className="text-[var(--muted)]" onClick={() => { setInputImage(null); setInputImageName(''); }}>Remove</button>
+                {attachments.length ? (
+                  <div className="mb-3 space-y-2">
+                    {attachments.map((attachment, index) => (
+                      <div key={`${attachment.name}-${index}`} className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm">
+                        <span>{attachment.name}</span>
+                        <button
+                          className="text-[var(--muted)]"
+                          onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== index))}
+                          type="button"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 ) : null}
                 <textarea
@@ -623,14 +570,13 @@ export default function HomePage() {
                 />
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <label className="cursor-pointer rounded-full border border-[var(--border)] px-3 py-1.5 text-sm" htmlFor="image-upload">Upload image</label>
-                    <input id="image-upload" type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
-                    <button className="rounded-full border border-[var(--border)] px-3 py-1.5 text-sm" onClick={generateImage} disabled={isBusy}>
-                      {isGeneratingImage ? 'Generating…' : 'Generate image'}
-                    </button>
+                    <label htmlFor="attachment-upload" className="flex cursor-pointer items-center gap-2 rounded-full border border-[var(--border)] px-3 py-1.5 text-sm">
+                      <Plus size={16} /> Attach
+                    </label>
+                    <input id="attachment-upload" type="file" multiple className="hidden" onChange={handleAttachmentSelect} />
                   </div>
                   <div className="text-sm text-[var(--muted)]">Mode: {mode}</div>
-                  <button className={`flex items-center justify-center rounded-full bg-[var(--accent)] text-sm font-medium text-white ${isBusy ? 'h-10 w-10' : 'gap-2 px-4 py-2'}`} onClick={() => void sendMessage()} disabled={isBusy}>
+                  <button className={`flex items-center justify-center rounded-full bg-[var(--accent)] text-sm font-medium text-white ${isBusy ? 'h-10 w-10' : 'gap-2 px-4 py-2'}`} onClick={() => void sendMessage()} disabled={isBusy || (!draft.trim() && !attachments.length)}>
                     {isBusy ? (
                       <span className="flex items-center gap-1">
                         <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.2s]" />
@@ -666,14 +612,13 @@ export default function HomePage() {
                   <ShieldCheck size={16} className="text-[var(--accent)]" />
                   WimpyID sign-in
                 </div>
-                <input value={authForm.name} onChange={(e) => setAuthForm((prev) => ({ ...prev, name: e.target.value }))} placeholder="Full name" className="mt-3 w-full rounded-2xl border border-[var(--border)] bg-transparent px-3 py-2 text-sm outline-none" />
-                <input value={authForm.email} onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))} placeholder="Email" className="mt-2 w-full rounded-2xl border border-[var(--border)] bg-transparent px-3 py-2 text-sm outline-none" />
+                <p className="mt-3 text-sm text-[var(--muted)]">Use WimpyID to sign in securely with the shared Wimpy Cooperations authentication flow.</p>
                 <div className="mt-4 flex gap-2">
-                  <button className="flex-1 rounded-2xl bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white" onClick={() => handleAuthSubmit('signin')}>
-                    Continue
+                  <button className="flex-1 rounded-2xl bg-[var(--accent)] px-3 py-2 text-sm font-medium text-white" onClick={() => handleWimpyIDLogin('login')}>
+                    Sign in
                   </button>
-                  <button className="flex-1 rounded-2xl border border-[var(--border)] px-3 py-2 text-sm" onClick={() => handleAuthSubmit('signup')}>
-                    Create account
+                  <button className="flex-1 rounded-2xl border border-[var(--border)] px-3 py-2 text-sm" onClick={() => handleWimpyIDLogin('signup')}>
+                    Sign up
                   </button>
                 </div>
               </div>

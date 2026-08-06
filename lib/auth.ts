@@ -1,3 +1,5 @@
+import { supabase } from './supabase';
+
 export type WimpyPlan = 'Free' | 'Pro';
 export type WimpyPaymentStatus = 'paid' | 'failed' | 'pending';
 
@@ -13,24 +15,36 @@ export function buildWimpyPayUrl(appUrl: string, plan: WimpyPlan = 'Pro') {
   return `https://pay.wimpy-corp.com.ng/checkout?redirect=${encodeURIComponent(redirectUrl.toString())}&plan=${plan}`;
 }
 
-export function bootstrapWimpyIDSession() {
+export async function bootstrapWimpyIDSession() {
   if (typeof window === 'undefined') return null;
-  const hash = window.location.hash || '';
-  const params = new URLSearchParams(hash.replace(/^#/, ''));
+
+  const hash = window.location.hash.replace(/^#/, '');
+  const params = new URLSearchParams(hash);
   const accessToken = params.get('access_token');
   const refreshToken = params.get('refresh_token');
-  const userId = params.get('user_id');
-  const displayName = params.get('display_name');
 
   if (accessToken && refreshToken) {
-    void window.history.replaceState({}, '', window.location.pathname + window.location.search);
-    return {
-      displayName: displayName || 'Wimpy Member',
-      wimpyId: userId || `WIMPY-${Math.floor(Math.random() * 9000 + 1000)}`,
-    };
+    const { data, error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+    if (error || !data.session?.user) {
+      return null;
+    }
+    window.history.replaceState({}, '', window.location.pathname + window.location.search);
   }
 
-  return null;
+  const { data: sessionData } = await supabase.auth.getSession();
+  const user = sessionData?.session?.user;
+  if (!user) return null;
+
+  const displayName =
+    typeof user.user_metadata?.display_name === 'string'
+      ? user.user_metadata.display_name
+      : user.email?.split('@')[0] ?? 'Wimpy Member';
+
+  return {
+    displayName,
+    wimpyId: user.id,
+    plan: user.user_metadata?.plan === 'Pro' ? 'Pro' : 'Free',
+  };
 }
 
 export function bootstrapWimpyPaySession() {

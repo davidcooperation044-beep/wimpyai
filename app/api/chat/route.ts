@@ -2,14 +2,16 @@ import { NextRequest } from 'next/server';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { getQuotaState } from '@/lib/quota';
 import { modelRegistry } from '@/lib/models';
-
-function getRequestId(req: NextRequest) {
-  return req.headers.get('x-request-id') || crypto.randomUUID();
-}
+import { getUserFromBearerToken } from '@/lib/supabase-server';
 
 export async function POST(req: NextRequest) {
-  const requestId = getRequestId(req);
-  const rateLimitKey = `chat:${requestId}`;
+  const user = await getUserFromBearerToken(req.headers.get('authorization'));
+  if (!user) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const requestId = crypto.randomUUID();
+  const rateLimitKey = `chat:${user.id}`;
   const rateLimit = checkRateLimit(rateLimitKey);
 
   if (!rateLimit.allowed) {
@@ -18,7 +20,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const { prompt, persona = 'Serious' } = body;
-  const quota = getQuotaState(0, persona === 'Pro');
+  const quota = getQuotaState(0, false);
 
   if (!process.env.OPENROUTER_API_KEY) {
     return Response.json({ error: 'OpenRouter is not configured yet.', requestId }, { status: 500 });

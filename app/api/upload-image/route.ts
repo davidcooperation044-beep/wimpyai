@@ -1,9 +1,15 @@
 import { NextRequest } from 'next/server';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { modelRegistry } from '@/lib/models';
+import { getUserFromBearerToken } from '@/lib/supabase-server';
 
 export async function POST(req: NextRequest) {
-  const rateLimit = checkRateLimit('upload-image');
+  const user = await getUserFromBearerToken(req.headers.get('authorization'));
+  if (!user) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const rateLimit = checkRateLimit(`upload-image:${user.id}`);
   if (!rateLimit.allowed) {
     return Response.json({ error: 'Rate limit exceeded' }, { status: 429 });
   }

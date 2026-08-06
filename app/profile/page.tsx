@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { buildWimpyIDLoginUrl, buildWimpyPayUrl } from '@/lib/auth';
+import { supabase } from '@/lib/supabase';
 import { Download, ShieldCheck, Sparkles, UserCircle2 } from 'lucide-react';
 
 type ProfileState = {
@@ -118,7 +119,8 @@ export default function ProfilePage() {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
     setProfile({
       isConnected: false,
       userId: null,
