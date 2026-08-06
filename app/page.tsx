@@ -143,6 +143,7 @@ export default function HomePage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
   const [actionSheetMessageId, setActionSheetMessageId] = useState<string | null>(null);
+  const [isInputFocused, setIsInputFocused] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(() => {
     if (typeof window === 'undefined') return false;
     const dismissed = window.localStorage.getItem('wimpyai-auth-dismissed-v1');
@@ -184,23 +185,38 @@ export default function HomePage() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const viewport = window.visualViewport;
-    if (!viewport) return;
 
     const updateViewport = () => {
-      setViewportHeight(viewport.height);
-      setKeyboardOffset(Math.max(0, window.innerHeight - viewport.height));
+      const height = viewport?.height ?? window.innerHeight;
+      setViewportHeight(height);
+      setKeyboardOffset(viewport ? Math.max(0, window.innerHeight - viewport.height) : 0);
       if (draft.length || isBusy) {
         scrollToBottom();
       }
     };
 
-    viewport.addEventListener('resize', updateViewport);
-    viewport.addEventListener('scroll', updateViewport);
+    const resetViewport = () => {
+      setViewportHeight(window.visualViewport?.height ?? window.innerHeight);
+      setKeyboardOffset(0);
+      if (draft.length || isBusy) {
+        scrollToBottom();
+      }
+    };
+
+    viewport?.addEventListener('resize', updateViewport);
+    viewport?.addEventListener('scroll', updateViewport);
+    window.addEventListener('resize', updateViewport);
+    window.addEventListener('orientationchange', updateViewport);
+    window.addEventListener('focusout', resetViewport);
+
     updateViewport();
 
     return () => {
-      viewport.removeEventListener('resize', updateViewport);
-      viewport.removeEventListener('scroll', updateViewport);
+      viewport?.removeEventListener('resize', updateViewport);
+      viewport?.removeEventListener('scroll', updateViewport);
+      window.removeEventListener('resize', updateViewport);
+      window.removeEventListener('orientationchange', updateViewport);
+      window.removeEventListener('focusout', resetViewport);
     };
   }, [draft.length, isBusy, scrollToBottom]);
 
@@ -542,11 +558,15 @@ export default function HomePage() {
   };
 
   const handleOpenCamera = () => {
-    cameraInputRef.current?.click();
+    if (typeof window !== 'undefined') {
+      cameraInputRef.current?.click();
+    }
   };
 
   const handleOpenFilePicker = () => {
-    fileInputRef.current?.click();
+    if (typeof window !== 'undefined') {
+      fileInputRef.current?.click();
+    }
   };
 
   const handleAttach = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -587,7 +607,7 @@ export default function HomePage() {
         <div className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-sm">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 md:px-8">
             <button
-              className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
+              className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm md:hidden"
               onClick={openSidebar}
               aria-label="Open sidebar"
             >
@@ -601,7 +621,11 @@ export default function HomePage() {
             </div>
             <button
               className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] shadow-sm"
-              onClick={() => window.location.assign('/profile')}
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  window.location.href = '/profile';
+                }
+              }}
               aria-label="Open profile"
             >
               <UserCircle2 size={20} />
@@ -610,7 +634,54 @@ export default function HomePage() {
         </div>
 
         <div className="relative h-[calc(100vh-96px)] overflow-hidden lg:flex lg:h-full lg:overflow-visible">
-          <div className="flex-1 overflow-hidden px-0 pb-24 pt-4 md:px-8">
+          <aside className="hidden lg:flex lg:w-80 lg:flex-col lg:border-r lg:border-[var(--border)] lg:bg-[var(--panel)] lg:shadow-sm lg:overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-4">
+              <div>
+                <p className="text-sm font-semibold">Conversations</p>
+                <p className="text-xs text-[var(--muted)]">Swipe left to delete</p>
+              </div>
+            </div>
+            <div className="p-4">
+              <div className="rounded-3xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
+                <p className="text-sm font-semibold">{profile.displayName}</p>
+                <p className="text-xs text-[var(--muted)]">{profile.isConnected ? `Connected • ${profile.plan}` : 'Guest • Free'}</p>
+              </div>
+              <div className="mt-4 space-y-3">
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => setShowAuthModal(true)}>
+                  {profile.isConnected ? 'Account' : 'Sign in'}
+                </button>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => window.location.href = '/profile'}>
+                  Profile
+                </button>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={createConversation}>
+                  New chat
+                </button>
+              </div>
+              <div className="mt-6 space-y-3">
+                {conversations.map((conversation) => (
+                  <div key={conversation.id} className="group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)]">
+                    <button
+                      className={`w-full px-4 py-4 text-left ${activeConversationId === conversation.id ? 'bg-[var(--accent-soft)]' : ''}`}
+                      onClick={() => {
+                        setActiveConversationId(conversation.id);
+                      }}
+                    >
+                      <div className="font-medium">{conversation.title}</div>
+                      <div className="text-xs text-[var(--muted)]">{conversation.messages.length} messages</div>
+                    </button>
+                    <button
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-[var(--border)] bg-[var(--panel-strong)] p-2 text-[var(--muted)] opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+                      onClick={() => handleDeleteConversation(conversation.id)}
+                      aria-label="Delete conversation"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
+          <div className="flex-1 overflow-hidden px-0 pb-24 pt-4 md:px-8 lg:px-10" style={{ transform: isInputFocused ? 'translateY(-10px)' : 'translateY(0)' }}>
             <div
               ref={chatContainerRef}
               className="h-full min-h-[50vh] overflow-y-auto overscroll-contain px-4 pb-4 md:px-0"
@@ -757,6 +828,8 @@ export default function HomePage() {
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
                       onKeyDown={handleKeyDown}
+                      onFocus={() => setIsInputFocused(true)}
+                      onBlur={() => setIsInputFocused(false)}
                       rows={1}
                       className="min-h-[44px] flex-1 resize-none rounded-3xl border border-[var(--border)] bg-transparent px-4 py-3 text-base leading-6 outline-none focus:border-[var(--accent)]"
                       placeholder={isBusy ? 'WIMPY is responding…' : 'Ask WimpyAI anything…'}
@@ -787,7 +860,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        <aside className={`fixed inset-0 z-40 ${sidebarOpen ? 'pointer-events-auto' : 'pointer-events-none'} md:hidden`}>
+        <aside className={`fixed inset-0 z-40 ${sidebarOpen ? 'pointer-events-auto' : 'pointer-events-none'} lg:hidden`}>
           <div
             className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ${sidebarOpen ? 'opacity-100' : 'opacity-0'}`}
             onClick={closeSidebar}

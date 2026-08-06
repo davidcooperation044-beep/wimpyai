@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { buildWimpyIDLoginUrl, buildWimpyPayUrl } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import { Download, ShieldCheck, Sparkles, UserCircle2 } from 'lucide-react';
@@ -56,6 +56,8 @@ function loadJson<T>(key: string, fallback: T): T {
 export default function ProfilePage() {
   const [profile, setProfile] = useState<ProfileState>(() => loadJson<ProfileState>('wimpyai-profile-v1', emptyProfile));
   const [settings, setSettings] = useState<SettingsState>(() => loadJson<SettingsState>('wimpyai-settings-v1', emptySettings));
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -117,6 +119,17 @@ export default function ProfilePage() {
     if (typeof window === 'undefined') return;
     const url = buildWimpyPayUrl(window.location.origin, profile.plan === 'Free' ? 'Pro' : 'Free');
     window.open(url, '_blank', 'noopener,noreferrer');
+    showToast(profile.plan === 'Free' ? 'Opening Pro upgrade flow…' : 'Opening subscription management…');
+  };
+
+  const router = useRouter();
+
+  const showToast = (message: string) => {
+    setToast(message);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3200);
   };
 
   const handleSignOut = async () => {
@@ -130,6 +143,7 @@ export default function ProfilePage() {
       subscriptionStatus: 'inactive',
       lastLogin: null,
     });
+    showToast('Signed out successfully.');
   };
 
   const handleToggle = (key: keyof SettingsState, value: boolean) => {
@@ -139,32 +153,75 @@ export default function ProfilePage() {
   return (
     <main className="min-h-screen bg-[var(--bg)] text-[var(--ink)]">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6 lg:p-10">
-        <div className="flex items-center justify-between">
+        {toast ? (
+          <div className="fixed bottom-6 left-1/2 z-50 w-[min(94%,420px)] -translate-x-1/2 rounded-3xl bg-[var(--panel)] p-4 text-sm shadow-2xl ring-1 ring-black/10">
+            {toast}
+          </div>
+        ) : null}
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-sm font-semibold text-[var(--accent)]">Account center</p>
             <h1 className="text-2xl font-semibold">Profile and settings</h1>
           </div>
-          <Link href="/" className="rounded-full border border-[var(--border)] px-3 py-2 text-sm">Back to chat</Link>
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              className="rounded-full border border-[var(--border)] px-3 py-2 text-sm"
+              onClick={() => router.push('/')}
+            >
+              Back to chat
+            </button>
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--accent)] text-xl font-semibold text-white">
+              {profile.avatarInitials}
+            </div>
+          </div>
         </div>
 
-        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-sm">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex items-center gap-4">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--accent)] text-xl font-semibold text-white">
-                {profile.avatarInitials}
-              </div>
-              <div>
-                <p className="text-lg font-semibold">{profile.displayName}</p>
-                <p className="text-sm text-[var(--muted)]">{profile.isConnected ? `WimpyID connected • ${profile.userId ?? 'No ID yet'}` : 'Not connected to WimpyID yet'}</p>
-                <p className="mt-1 text-xs text-[var(--muted)]">Last login: {profile.lastLogin ? new Date(profile.lastLogin).toLocaleString() : 'Not available'}</p>
-              </div>
+        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel-strong)] p-6 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-lg font-semibold">{profile.displayName}</p>
+              <p className="text-sm text-[var(--muted)]">
+                {profile.isConnected ? `WimpyID connected • ${profile.userId ?? 'No ID yet'}` : 'Not connected to WimpyID yet'}
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Last login: {profile.lastLogin ? new Date(profile.lastLogin).toLocaleString() : 'Not available'}
+              </p>
             </div>
-            <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-sm">
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm">
               <div className="flex items-center gap-2 font-medium">
                 <ShieldCheck size={16} className="text-[var(--accent)]" />
                 {profile.isConnected ? 'Connected' : 'Not connected'}
               </div>
-              <p className="mt-1 text-[var(--muted)]">Plan: {profile.plan} • {profile.subscriptionStatus === 'active' ? 'Subscription active' : 'Subscription inactive'}</p>
+              <p className="mt-1 text-[var(--muted)]">
+                Plan: {profile.plan} • {profile.subscriptionStatus === 'active' ? 'Subscription active' : 'Subscription inactive'}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {profile.plan === 'Free' ? (
+                  <button
+                    type="button"
+                    className="rounded-2xl bg-[var(--accent)] px-3 py-2 text-sm font-semibold text-white"
+                    onClick={handleSubscriptionToggle}
+                  >
+                    Upgrade to Pro
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm"
+                    onClick={handleSubscriptionToggle}
+                  >
+                    Manage subscription
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm"
+                  onClick={exportData}
+                >
+                  Export data
+                </button>
+              </div>
             </div>
           </div>
         </section>
