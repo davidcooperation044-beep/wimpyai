@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { type KeyboardEvent, type ChangeEvent } from 'react';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
@@ -48,6 +48,11 @@ type SettingsState = {
   soundEffects: boolean;
   compactMode: boolean;
 };
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
 
 const initialConversation: Conversation = {
   id: 'conv-1',
@@ -129,14 +134,26 @@ export default function HomePage() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSupported, setRecordingSupported] = useState(false);
   const [transcript, setTranscript] = useState('');
+  const [offline, setOffline] = useState(false);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+  const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [profile, setProfile] = useState<ProfileState>(() => loadJson<ProfileState>('wimpyai-profile-v1', emptyProfile));
   const [settings, setSettings] = useState<SettingsState>(() => loadJson<SettingsState>('wimpyai-settings-v1', emptySettings));
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
+  const [actionSheetMessageId, setActionSheetMessageId] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(() => {
     if (typeof window === 'undefined') return false;
     const dismissed = window.localStorage.getItem('wimpyai-auth-dismissed-v1');
     const savedProfile = loadJson<ProfileState>('wimpyai-profile-v1', emptyProfile);
     return !dismissed && !savedProfile.isConnected;
   });
+
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeConversationId) ?? conversations[0],
@@ -145,6 +162,74 @@ export default function HomePage() {
 
   const isBusy = isStreaming || isRecording;
   const pendingAssistantMessage = activeConversation?.messages[activeConversation.messages.length - 1];
+
+  const scrollToBottom = useCallback(() => {
+    if (!chatContainerRef.current) return;
+    chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleOnline = () => setOffline(false);
+    const handleOffline = () => setOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    handleOnline();
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+
+    const updateViewport = () => {
+      setViewportHeight(viewport.height);
+      setKeyboardOffset(Math.max(0, window.innerHeight - viewport.height));
+      if (draft.length || isBusy) {
+        scrollToBottom();
+      }
+    };
+
+    viewport.addEventListener('resize', updateViewport);
+    viewport.addEventListener('scroll', updateViewport);
+    updateViewport();
+
+    return () => {
+      viewport.removeEventListener('resize', updateViewport);
+      viewport.removeEventListener('scroll', updateViewport);
+    };
+  }, [draft.length, isBusy, scrollToBottom]);
+
+  useLayoutEffect(() => {
+    if (!chatContainerRef.current) return;
+    scrollToBottom();
+  }, [conversations, scrollToBottom]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const installEvent = event as BeforeInstallPromptEvent;
+      if (typeof installEvent.prompt === 'function') {
+        event.preventDefault();
+        setInstallPromptEvent(installEvent);
+      }
+    };
+    window.addEventListener('beforeinstallprompt', handler as EventListener);
+    return () => window.removeEventListener('beforeinstallprompt', handler as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && profile.isConnected) {
+        window.dispatchEvent(new Event('wimpy-profile-sync'));
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [profile.isConnected]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -411,195 +496,360 @@ export default function HomePage() {
     }));
   };
 
+  const handleInstallPrompt = async () => {
+    if (!installPromptEvent) return;
+    installPromptEvent.prompt();
+    const choice = await installPromptEvent.userChoice;
+    setInstallPromptEvent(null);
+    if (choice.outcome === 'accepted') {
+      setTimeout(() => setInstallPromptEvent(null), 1000);
+    }
+  };
+
+  const openSidebar = () => setSidebarOpen(true);
+  const closeSidebar = () => setSidebarOpen(false);
+
+  const handleOutsideDrawerClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.currentTarget === event.target) {
+      closeSidebar();
+      if (navigator.vibrate) navigator.vibrate(10);
+    }
+  };
+
+  const handleMessageActionOpen = (messageId: string) => {
+    setActionSheetMessageId(messageId);
+  };
+
+  const closeMessageActionSheet = () => setActionSheetMessageId(null);
+
+  const handleAttachmentButton = () => setShowAttachmentSheet(true);
+  const closeAttachmentSheet = () => setShowAttachmentSheet(false);
+
+  const handleCopyMessage = (messageId: string) => {
+    const message = activeConversation?.messages.find((msg) => msg.id === messageId);
+    if (!message) return;
+    copyText(message.content);
+    closeMessageActionSheet();
+    if (navigator.vibrate) navigator.vibrate(10);
+  };
+
+  const handleDeleteConversation = (conversationId: string) => {
+    setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
+    if (conversationId === activeConversationId && conversations.length > 1) {
+      setActiveConversationId(conversations[0].id);
+    }
+    if (navigator.vibrate) navigator.vibrate([10, 20, 10]);
+  };
+
+  const handleOpenCamera = () => {
+    cameraInputRef.current?.click();
+  };
+
+  const handleOpenFilePicker = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAttach = async (event: ChangeEvent<HTMLInputElement>) => {
+    if (!event.target.files?.length) return;
+
+    const nextAttachments: Array<{ name: string; type: string; src: string }> = [];
+    for (const file of Array.from(event.target.files)) {
+      const reader = new FileReader();
+      const src = await new Promise<string>((resolve) => {
+        reader.onloadend = () => {
+          resolve(typeof reader.result === 'string' ? reader.result : '');
+        };
+        reader.readAsDataURL(file);
+      });
+      nextAttachments.push({ name: file.name, type: file.type, src });
+    }
+    setAttachments((prev) => [...prev, ...nextAttachments]);
+    closeAttachmentSheet();
+  };
+
+  const handleLongPressMessage = (messageId: string) => {
+    handleMessageActionOpen(messageId);
+  };
+
+  const handleMessageTouchStart = (messageId: string) => {
+    const timeout = window.setTimeout(() => handleLongPressMessage(messageId), 500);
+    return timeout;
+  };
+
+  const handleMessageTouchEnd = (timeoutId: number | undefined) => {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  };
+
 
   return (
     <main className={settings.darkMode ? 'dark' : ''}>
-      <div className="h-screen overflow-hidden bg-[var(--bg)] text-[var(--ink)] transition-colors">
-        <div className="mx-auto flex h-screen max-w-7xl flex-col lg:flex-row">
-          <aside className="w-full border-b border-[var(--border)] bg-[var(--panel)] p-4 lg:w-80 lg:border-b-0 lg:border-r">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold">WimpyAI</p>
-                <p className="text-sm text-[var(--muted)]">Claude-style assistant</p>
-              </div>
-              <button className="rounded-full border border-[var(--border)] p-2" onClick={() => setSettings((prev) => ({ ...prev, darkMode: !prev.darkMode }))} aria-label="toggle theme">
-                {settings.darkMode ? <SunMedium size={16} /> : <Moon size={16} />}
-              </button>
-            </div>
-            <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-3">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent)] text-sm font-semibold text-white">
-                  {profile.isConnected ? profile.avatarInitials : 'G'}
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{profile.isConnected ? profile.displayName : 'Guest'}</p>
-                  <p className="truncate text-xs text-[var(--muted)]">{profile.isConnected ? profile.userId ?? 'No ID yet' : 'Sign in to unlock your account'}</p>
-                </div>
-              </div>
-              <div className="mt-3 flex items-center justify-between text-xs text-[var(--muted)]">
-                <span>{profile.isConnected ? 'Connected' : 'Not connected'}</span>
-                <span>{profile.subscriptionStatus === 'active' ? 'Pro active' : 'Free plan'}</span>
-              </div>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <button className="flex-1 rounded-2xl border border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-2 text-left text-sm" onClick={() => setShowAuthModal(true)}>
-                {profile.isConnected ? 'Account' : 'Sign in'}
-              </button>
-              <Link className="flex-1 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-center text-sm" href="/profile">
-                Profile
-              </Link>
-            </div>
-            <button className="mt-5 flex w-full items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-left text-sm" onClick={createConversation}>
-              <Plus size={16} /> New chat
+      <div className="h-screen min-h-screen overflow-hidden bg-[var(--bg)] text-[var(--ink)] transition-colors">
+        <div className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-sm">
+          <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 md:px-8">
+            <button
+              className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
+              onClick={openSidebar}
+              aria-label="Open sidebar"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M4 6H20M4 12H20M4 18H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
             </button>
-            <div className="mt-6 space-y-2">
-              {conversations.map((conversation) => (
-                <button
-                  key={conversation.id}
-                  className={`w-full rounded-2xl px-3 py-3 text-left text-sm ${activeConversationId === conversation.id ? 'bg-[var(--accent-soft)]' : 'hover:bg-[var(--panel-strong)]'}`}
-                  onClick={() => setActiveConversationId(conversation.id)}
-                >
-                  <div className="font-medium">{conversation.title}</div>
-                  <div className="text-xs text-[var(--muted)]">{conversation.messages.length} messages</div>
-                </button>
-              ))}
+            <div className="flex flex-col items-center text-center">
+              <p className="text-sm font-semibold">WimpyAI</p>
+              <p className="text-[11px] text-[var(--muted)]">Tap to chat instantly</p>
             </div>
-          </aside>
-          <section className="flex-1 min-h-0 p-4 md:p-8">
-            <div className="mx-auto flex h-full max-w-3xl flex-col gap-4">
-              <div className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
-                <div>
-                  <p className="text-sm font-semibold">{mode} mode</p>
-                  <p className="text-sm text-[var(--muted)]">{isBusy ? 'WIMPY is thinking…' : 'Calm, precise, and built by Wimpy Cooperations.'}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button className={`rounded-full px-3 py-1.5 text-sm ${mode === 'Serious' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-strong)]'}`} onClick={() => setMode('Serious')}>Serious</button>
-                  <button className={`rounded-full px-3 py-1.5 text-sm ${mode === 'Wimpy' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-strong)]'}`} onClick={() => setMode('Wimpy')}>Wimpy</button>
-                </div>
-              </div>
-
-              <div className="flex-1 min-h-0 overflow-y-auto rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-4 shadow-sm">
-                <div className="mx-auto flex max-w-2xl flex-col gap-4">
-                  {isBusy && pendingAssistantMessage?.role === 'assistant' && !pendingAssistantMessage.content.trim() ? (
-                    <article className="flex gap-3">
-                      <div className="mt-1 flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
-                        <Sparkles size={16} />
-                      </div>
-                      <div className="max-w-[85%] rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-[var(--accent)] [animation-delay:-0.2s]" />
-                          <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-[var(--accent)] [animation-delay:-0.1s]" />
-                          <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-[var(--accent)]" />
-                        </div>
-                      </div>
-                    </article>
-                  ) : null}
-                  {activeConversation?.messages.map((message) => (
-                    <article key={message.id} className={`flex gap-3 ${message.role === 'user' ? 'justify-end' : ''}`}>
-                      {message.role === 'assistant' ? (
-                        <div className="mt-1 flex h-8 w-8 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
-                          <Sparkles size={16} />
-                        </div>
-                      ) : null}
-                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${message.role === 'user' ? 'bg-[var(--accent)] text-white' : 'bg-transparent'}`}>
-                        {message.image ? <img src={message.image} alt="Uploaded content" className="mb-3 max-h-64 rounded-xl object-cover" /> : null}
-                        {message.imageUrl ? <img src={message.imageUrl} alt="Generated content" className="mb-3 max-h-80 rounded-xl object-cover" /> : null}
-                        {message.role === 'assistant' ? (
-                          <div className="prose prose-sm max-w-none text-[var(--ink)]">
-                            <ReactMarkdown
-                              remarkPlugins={[remarkGfm, remarkMath]}
-                              rehypePlugins={[rehypeKatex]}
-                              components={{
-                                code({ inline, className, children, ...props }: any) {
-                                  const match = /language-(\w+)/.exec(className || '');
-                                  return !inline && match ? (
-                                    <div className="my-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[#1e1e1e] text-sm">
-                                      <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-300">
-                                        <span>{match[1]}</span>
-                                        <button className="rounded px-2 py-1 hover:bg-white/10" onClick={() => copyText(String(children))}>
-                                          <Copy size={14} />
-                                        </button>
-                                      </div>
-                                      <SyntaxHighlighter style={vscDarkPlus as any} language={match[1]} customStyle={{ margin: 0, padding: '1rem', background: '#1e1e1e' }}>
-                                        {String(children).replace(/\n$/, '')}
-                                      </SyntaxHighlighter>
-                                    </div>
-                                  ) : (
-                                    <code className="rounded bg-[var(--panel-strong)] px-1.5 py-0.5 text-sm" {...props}>{children}</code>
-                                  );
-                                },
-                              }}
-                            >
-                              {message.content}
-                            </ReactMarkdown>
-                          </div>
-                        ) : (
-                          <div className="whitespace-pre-wrap text-sm">{message.content}</div>
-                        )}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </div>
-
-              <div className="shrink-0 rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-3 shadow-sm">
-                {attachments.length ? (
-                  <div className="mb-3 space-y-2">
-                    {attachments.map((attachment, index) => (
-                      <div key={`${attachment.name}-${index}`} className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm">
-                        <span>{attachment.name}</span>
-                        <button
-                          className="text-[var(--muted)]"
-                          onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== index))}
-                          type="button"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                <textarea
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  rows={4}
-                  className="w-full resize-none bg-transparent p-2 text-sm outline-none"
-                  placeholder={isBusy ? 'WIMPY is responding…' : 'Ask WimpyAI anything…'}
-                  disabled={isBusy}
-                />
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <label htmlFor="attachment-upload" className="flex cursor-pointer items-center gap-2 rounded-full border border-[var(--border)] px-3 py-1.5 text-sm">
-                      <Plus size={16} /> Attach
-                    </label>
-                    <input id="attachment-upload" type="file" multiple className="hidden" onChange={handleAttachmentSelect} />
-                  </div>
-                  <div className="text-sm text-[var(--muted)]">Mode: {mode}</div>
-                  <button className={`flex items-center justify-center rounded-full bg-[var(--accent)] text-sm font-medium text-white ${isBusy ? 'h-10 w-10' : 'gap-2 px-4 py-2'}`} onClick={() => void sendMessage()} disabled={isBusy || (!draft.trim() && !attachments.length)}>
-                    {isBusy ? (
-                      <span className="flex items-center gap-1">
-                        <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.2s]" />
-                        <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.1s]" />
-                        <span className="h-2 w-2 animate-bounce rounded-full bg-white" />
-                      </span>
-                    ) : (
-                      <>
-                        <SendHorizontal size={16} />
-                        <span>Send</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
+            <button
+              className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] shadow-sm"
+              onClick={() => window.location.assign('/profile')}
+              aria-label="Open profile"
+            >
+              <UserCircle2 size={20} />
+            </button>
+          </div>
         </div>
 
+        <div className="relative h-[calc(100vh-96px)] overflow-hidden lg:flex lg:h-full lg:overflow-visible">
+          <div className="flex-1 overflow-hidden px-0 pb-24 pt-4 md:px-8">
+            <div
+              ref={chatContainerRef}
+              className="h-full min-h-[50vh] overflow-y-auto overscroll-contain px-4 pb-4 md:px-0"
+              style={{ paddingBottom: `${keyboardOffset + 24}px` }}
+            >
+              <div className="mx-auto flex max-w-3xl flex-col gap-4">
+                <div className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold">{mode} mode</p>
+                    <p className="text-sm text-[var(--muted)]">{isBusy ? 'WIMPY is thinking…' : 'Calm, precise, and built by Wimpy Cooperations.'}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button className={`rounded-full px-3 py-1.5 text-sm ${mode === 'Serious' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-strong)]'}`} onClick={() => setMode('Serious')}>Serious</button>
+                    <button className={`rounded-full px-3 py-1.5 text-sm ${mode === 'Wimpy' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-strong)]'}`} onClick={() => setMode('Wimpy')}>Wimpy</button>
+                  </div>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-4 shadow-sm">
+                  <div className="mx-auto flex max-w-2xl flex-col gap-4">
+                    {isBusy && pendingAssistantMessage?.role === 'assistant' && !pendingAssistantMessage.content.trim() ? (
+                      <article className="flex gap-3">
+                        <div className="mt-1 flex h-10 w-10 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
+                          <Sparkles size={18} />
+                        </div>
+                        <div className="max-w-[85%] rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-[var(--accent)] [animation-delay:-0.2s]" />
+                            <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-[var(--accent)] [animation-delay:-0.1s]" />
+                            <span className="h-2.5 w-2.5 animate-bounce rounded-full bg-[var(--accent)]" />
+                          </div>
+                        </div>
+                      </article>
+                    ) : null}
+                    {activeConversation?.messages.map((message) => {
+                      const isUser = message.role === 'user';
+                      let touchTimer: number | undefined;
+                      return (
+                        <article
+                          key={message.id}
+                          className={`flex gap-3 ${isUser ? 'justify-end' : ''}`}
+                          onTouchStart={() => {
+                            touchTimer = window.setTimeout(() => handleLongPressMessage(message.id), 500);
+                          }}
+                          onTouchEnd={() => handleMessageTouchEnd(touchTimer)}
+                          onTouchMove={() => handleMessageTouchEnd(touchTimer)}
+                          onMouseDown={() => {
+                            if (window.innerWidth < 768) {
+                              touchTimer = window.setTimeout(() => handleLongPressMessage(message.id), 500);
+                            }
+                          }}
+                          onMouseUp={() => handleMessageTouchEnd(touchTimer)}
+                        >
+                          {message.role === 'assistant' ? (
+                            <div className="mt-1 flex h-10 w-10 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
+                              <Sparkles size={18} />
+                            </div>
+                          ) : null}
+                          <div className={`relative max-w-[85%] rounded-3xl px-4 py-3 ${isUser ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-strong)] text-[var(--ink)]'}`}>
+                            {message.image ? <img src={message.image} alt="Uploaded content" className="mb-3 max-h-64 rounded-xl object-cover" /> : null}
+                            {message.imageUrl ? <img src={message.imageUrl} alt="Generated content" className="mb-3 max-h-80 rounded-xl object-cover" /> : null}
+                            {message.role === 'assistant' ? (
+                              <div className="prose prose-sm max-w-none text-[var(--ink)]">
+                                <ReactMarkdown
+                                  remarkPlugins={[remarkGfm, remarkMath]}
+                                  rehypePlugins={[rehypeKatex]}
+                                  components={{
+                                    code({ inline, className, children, ...props }: any) {
+                                      const match = /language-(\w+)/.exec(className || '');
+                                      return !inline && match ? (
+                                        <div className="my-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[#1e1e1e] text-sm">
+                                          <div className="flex items-center justify-between border-b border-white/10 px-3 py-2 text-[11px] uppercase tracking-wide text-gray-300">
+                                            <span>{match[1]}</span>
+                                            <button className="rounded px-2 py-1 hover:bg-white/10" onClick={() => copyText(String(children))}>
+                                              <Copy size={14} />
+                                            </button>
+                                          </div>
+                                          <SyntaxHighlighter style={vscDarkPlus as any} language={match[1]} customStyle={{ margin: 0, padding: '1rem', background: '#1e1e1e' }}>
+                                            {String(children).replace(/\n$/, '')}
+                                          </SyntaxHighlighter>
+                                        </div>
+                                      ) : (
+                                        <code className="rounded bg-[var(--panel-strong)] px-1.5 py-0.5 text-sm" {...props}>{children}</code>
+                                      );
+                                    },
+                                  }}
+                                >
+                                  {message.content}
+                                </ReactMarkdown>
+                              </div>
+                            ) : (
+                              <div className="whitespace-pre-wrap text-sm">{message.content}</div>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="sticky bottom-0 z-10 mt-4 rounded-t-3xl border border-[var(--border)] border-b-0 bg-[var(--panel)] p-4 shadow-[0_-12px_30px_-20px_rgba(0,0,0,0.18)]" style={{ marginBottom: `env(safe-area-inset-bottom)` }}>
+                  {offline ? (
+                    <div className="mb-3 rounded-2xl border border-red-300 bg-red-100 px-3 py-2 text-sm text-red-700">
+                      You are offline. Messages will send when connection returns.
+                    </div>
+                  ) : null}
+                  {attachments.length ? (
+                    <div className="mb-3 space-y-2">
+                      {attachments.map((attachment, index) => (
+                        <div key={`${attachment.name}-${index}`} className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm">
+                          <span className="truncate">{attachment.name}</span>
+                          <button
+                            className="text-[var(--muted)]"
+                            onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== index))}
+                            type="button"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
+                      onClick={handleAttachmentButton}
+                      aria-label="Attach media"
+                    >
+                      <Plus size={20} />
+                    </button>
+                    <button
+                      type="button"
+                      className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
+                      onClick={() => {
+                        if ('vibrate' in navigator) navigator.vibrate(10);
+                        setIsRecording((prev) => !prev);
+                      }}
+                      aria-label="Toggle voice input"
+                    >
+                      <Mic2 size={20} />
+                    </button>
+                    <textarea
+                      ref={inputRef}
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      rows={1}
+                      className="min-h-[44px] flex-1 resize-none rounded-3xl border border-[var(--border)] bg-transparent px-4 py-3 text-base leading-6 outline-none focus:border-[var(--accent)]"
+                      placeholder={isBusy ? 'WIMPY is responding…' : 'Ask WimpyAI anything…'}
+                      disabled={isBusy}
+                      style={{ fontSize: '16px' }}
+                      aria-label="Message input"
+                    />
+                    <button
+                      className="flex h-12 min-w-[52px] items-center justify-center rounded-3xl bg-[var(--accent)] text-white shadow-sm"
+                      onClick={() => void sendMessage()}
+                      disabled={isBusy || (!draft.trim() && !attachments.length)}
+                      aria-label="Send message"
+                    >
+                      {isBusy ? (
+                        <span className="flex items-center gap-1">
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.2s]" />
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.1s]" />
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-white" />
+                        </span>
+                      ) : (
+                        <SendHorizontal size={20} />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside className={`fixed inset-0 z-40 ${sidebarOpen ? 'pointer-events-auto' : 'pointer-events-none'} md:hidden`}>
+          <div
+            className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ${sidebarOpen ? 'opacity-100' : 'opacity-0'}`}
+            onClick={closeSidebar}
+          />
+          <div className={`absolute left-0 top-0 h-full w-80 max-w-full transform bg-[var(--panel)] shadow-2xl transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-4">
+              <div>
+                <p className="text-sm font-semibold">Conversations</p>
+                <p className="text-xs text-[var(--muted)]">Swipe left to delete</p>
+              </div>
+              <button className="rounded-2xl border border-[var(--border)] px-3 py-2" onClick={closeSidebar} aria-label="Close sidebar">
+                Close
+              </button>
+            </div>
+            <div className="p-4">
+              <div className="rounded-3xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
+                <p className="text-sm font-semibold">{profile.displayName}</p>
+                <p className="text-xs text-[var(--muted)]">{profile.isConnected ? `Connected • ${profile.plan}` : 'Guest • Free'}</p>
+              </div>
+              <div className="mt-4 space-y-3">
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); setShowAuthModal(true); }}>
+                  {profile.isConnected ? 'Account' : 'Sign in'}
+                </button>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); window.location.assign('/profile'); }}>
+                  Profile
+                </button>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); createConversation(); }}>
+                  New chat
+                </button>
+              </div>
+              <div className="mt-6 space-y-3">
+                {conversations.map((conversation) => (
+                  <div key={conversation.id} className="group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)]">
+                    <button
+                      className={`w-full px-4 py-4 text-left ${activeConversationId === conversation.id ? 'bg-[var(--accent-soft)]' : ''}`}
+                      onClick={() => {
+                        setActiveConversationId(conversation.id);
+                        closeSidebar();
+                      }}
+                    >
+                      <div className="font-medium">{conversation.title}</div>
+                      <div className="text-xs text-[var(--muted)]">{conversation.messages.length} messages</div>
+                    </button>
+                    <button
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-[var(--border)] bg-[var(--panel-strong)] p-2 text-[var(--muted)] opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+                      onClick={() => handleDeleteConversation(conversation.id)}
+                      aria-label="Delete conversation"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </aside>
+
         {showAuthModal ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-            <div className="w-full max-w-md rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-2xl">
-              <div className="flex items-start justify-between">
+          <div className="fixed inset-0 z-50 flex items-end bg-black/40 px-4 pb-4 md:items-center md:justify-center">
+            <div className="w-full rounded-t-3xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-2xl md:max-w-md md:rounded-3xl">
+              <div className="mx-auto mb-4 h-1.5 w-16 rounded-full bg-[var(--border)]"></div>
+              <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-sm font-semibold text-[var(--accent)]">Welcome to WimpyAI</p>
                   <h2 className="mt-1 text-xl font-semibold">Sign in or create an account</h2>
@@ -626,6 +876,60 @@ export default function HomePage() {
                 <UserCircle2 size={14} />
                 Your account state updates instantly across this device and future visits.
               </div>
+            </div>
+          </div>
+        ) : null}
+
+        {showAttachmentSheet ? (
+          <div className="fixed inset-0 z-50 flex items-end bg-black/40 px-4 pb-4" onClick={closeAttachmentSheet}>
+            <div className="w-full rounded-t-3xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              <div className="mx-auto mb-4 h-1.5 w-16 rounded-full bg-[var(--border)]"></div>
+              <p className="mb-4 text-lg font-semibold">Attach</p>
+              <div className="space-y-3">
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={handleOpenCamera}>
+                  Take Photo
+                </button>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={handleOpenFilePicker}>
+                  Photo Library
+                </button>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={handleOpenFilePicker}>
+                  File
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {actionSheetMessageId ? (
+          <div className="fixed inset-0 z-50 flex items-end bg-black/40 px-4 pb-4" onClick={closeMessageActionSheet}>
+            <div className="w-full rounded-t-3xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              <div className="mx-auto mb-4 h-1.5 w-16 rounded-full bg-[var(--border)]"></div>
+              <p className="mb-4 text-lg font-semibold">Message actions</p>
+              <div className="space-y-3">
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={() => handleCopyMessage(actionSheetMessageId)}>
+                  Copy text
+                </button>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={closeMessageActionSheet}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={handleAttach} />
+        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleAttach} />
+
+        {installPromptEvent ? (
+          <div className="fixed bottom-6 left-0 right-0 z-50 mx-auto w-[min(96%,420px)] rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-4 shadow-2xl">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">Install WimpyAI</p>
+                <p className="text-xs text-[var(--muted)]">Add WimpyAI to your home screen for a faster experience.</p>
+              </div>
+              <button className="rounded-2xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white" onClick={handleInstallPrompt}>
+                Install
+              </button>
             </div>
           </div>
         ) : null}
