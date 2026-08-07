@@ -628,6 +628,25 @@ export default function HomePage() {
 
           try {
             const parsed = JSON.parse(payload);
+            if (parsed.error) {
+              const errMsg = parsed.detail ? `${parsed.error}: ${parsed.detail}` : parsed.error;
+              setConversations((prev) =>
+                prev.map((conversation) =>
+                  conversation.id === activeConversationId
+                    ? {
+                        ...conversation,
+                        messages: conversation.messages.map((message) =>
+                          message.id === assistantMessage.id ? { ...message, content: errMsg } : message
+                        ),
+                      }
+                    : conversation
+                )
+              );
+              // stop streaming on server error
+              buffer = '';
+              break;
+            }
+
             const delta = parsed.delta || '';
             const imageUrl = parsed.imageUrl || '';
             if (delta) {

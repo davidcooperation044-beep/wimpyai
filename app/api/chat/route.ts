@@ -94,7 +94,25 @@ export async function POST(req: NextRequest) {
   });
 
   if (!response.ok) {
-    return Response.json({ error: 'OpenRouter request failed', requestId }, { status: 502 });
+    const bodyText = await response.text().catch(() => '');
+    const encoder = new TextEncoder();
+    const errorStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ error: 'OpenRouter request failed', detail: bodyText, requestId })}\n\n`)
+        );
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    return new Response(errorStream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+      },
+    });
   }
 
   const encoder = new TextEncoder();
