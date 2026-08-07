@@ -35,21 +35,24 @@ export async function POST(req: NextRequest) {
           {
             name: 'generate_image',
             type: 'function',
-            description: 'Generate an image from a text prompt and return it as a direct image URL.',
-            parameters: {
-              type: 'object',
-              properties: {
-                prompt: {
-                  type: 'string',
-                  description: 'The text prompt to generate an image from.',
+            function: {
+              name: 'generate_image',
+              description: 'Generate an image from a text prompt and return it as a direct image URL.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  prompt: {
+                    type: 'string',
+                    description: 'The text prompt to generate an image from.',
+                  },
+                  size: {
+                    type: 'string',
+                    enum: ['256x256', '512x512', '1024x1024'],
+                    description: 'The requested image size.',
+                  },
                 },
-                size: {
-                  type: 'string',
-                  enum: ['256x256', '512x512', '1024x1024'],
-                  description: 'The requested image size.',
-                },
+                required: ['prompt'],
               },
-              required: ['prompt'],
             },
           },
         ],
