@@ -693,11 +693,10 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div className="relative flex flex-1 flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-black/5">
+              <div className="relative flex h-full flex-1 flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-black/5">
                 <div
                   ref={chatContainerRef}
                   className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 md:px-0"
-                  style={{ paddingBottom: `${keyboardOffset + 160}px` }}
                 >
                   <div className="mx-auto flex max-w-2xl flex-col gap-4">
                     {isBusy && pendingAssistantMessage?.role === 'assistant' && !pendingAssistantMessage.content.trim() ? (
@@ -779,10 +778,7 @@ export default function HomePage() {
                     })}
                   </div>
                 </div>
-                <div
-                  className="absolute inset-x-0 bottom-0 z-10 border-t border-[var(--border)] bg-[var(--panel)] p-4"
-                  style={{ bottom: keyboardOffset ? `${keyboardOffset}px` : 0, paddingBottom: `env(safe-area-inset-bottom)` }}
-                >
+                <div className="border-t border-[var(--border)] bg-[var(--panel)] p-4">
                   {offline ? (
                     <div className="mb-3 rounded-2xl border border-red-300 bg-red-100 px-3 py-2 text-sm text-red-700">
                       You are offline. Messages will send when connection returns.
