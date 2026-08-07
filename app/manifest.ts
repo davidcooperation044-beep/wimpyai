@@ -9,6 +9,9 @@ export default function manifest(): MetadataRoute.Manifest {
     display: 'standalone',
     background_color: '#f2ece7',
     theme_color: '#b6653d',
-    icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
+    icons: [
+      { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' },
+      { src: '/wimpyai-logo-render-removebg-preview.png', sizes: '266x374', type: 'image/png' },
+    ],
   };
 }

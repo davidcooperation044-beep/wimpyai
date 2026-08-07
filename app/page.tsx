@@ -924,6 +924,7 @@ export default function HomePage() {
               </svg>
             </button>
             <div className="flex flex-col items-center text-center">
+              <img src="/wimpyai-logo-render-removebg-preview.png" alt="WimpyAI logo" className="mb-1 h-10 w-10 rounded-2xl object-cover" />
               <p className="text-sm font-semibold">WimpyAI</p>
               <p className="text-[11px] text-[var(--muted)]">Tap to chat instantly</p>
             </div>
