@@ -513,9 +513,10 @@ export default function HomePage() {
     }
   };
 
-  const sendMessage = async () => {
-    if ((!draft.trim() && !attachments.length) || isStreaming) return;
-    const content = draft.trim();
+  const sendMessage = async (overrideContent?: string) => {
+    const effectiveDraft = overrideContent ?? draft;
+    if ((!effectiveDraft.trim() && !attachments.length) || isStreaming) return;
+    const content = effectiveDraft.trim();
     const userMessage: Message = {
       id: createEntityId('msg'),
       role: 'user',
@@ -738,6 +739,7 @@ export default function HomePage() {
       }
     } finally {
       setIsStreaming(false);
+      setTranscript('');
     }
   };
 
@@ -1108,7 +1110,13 @@ export default function HomePage() {
                       }}
                       aria-label="Toggle voice input"
                     >
-                      <Mic2 size={20} />
+                      {isRecording ? (
+                        <div className="listening-container">
+                          <span className="listening-dot" />
+                        </div>
+                      ) : (
+                        <Mic2 size={20} />
+                      )}
                     </button>
                     <textarea
                       ref={inputRef}
@@ -1126,8 +1134,16 @@ export default function HomePage() {
                     />
                     <button
                       className="flex h-12 min-w-[52px] items-center justify-center rounded-3xl bg-[var(--accent)] text-white shadow-sm"
-                      onClick={() => void sendMessage()}
-                      disabled={isBusy || (!draft.trim() && !attachments.length)}
+                      onClick={() => {
+                        if (isRecording) {
+                          // stop and send the current transcript
+                          stopRecording();
+                          void sendMessage(transcript);
+                        } else {
+                          void sendMessage();
+                        }
+                      }}
+                      disabled={isStreaming || (!draft.trim() && !attachments.length && !transcript)}
                       aria-label="Send message"
                     >
                       {isBusy ? (

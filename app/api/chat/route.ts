@@ -6,12 +6,10 @@ import { getUserFromBearerToken } from '@/lib/supabase-server';
 
 export async function POST(req: NextRequest) {
   const user = await getUserFromBearerToken(req.headers.get('authorization'));
-  if (!user) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const userId = user?.id ?? 'guest';
 
   const requestId = crypto.randomUUID();
-  const rateLimitKey = `chat:${user.id}`;
+  const rateLimitKey = `chat:${userId}`;
   const rateLimit = checkRateLimit(rateLimitKey);
 
   if (!rateLimit.allowed) {
@@ -57,8 +55,8 @@ export async function POST(req: NextRequest) {
     body: JSON.stringify({
       model: modelRegistry.chat,
       stream: true,
-      function_call: 'auto',
-      functions: [
+      tool_choice: 'auto',
+      tools: [
         {
           name: 'generate_image',
           description: 'Generate an image from a text prompt and return the image URL.',
@@ -147,12 +145,19 @@ export async function POST(req: NextRequest) {
             try {
               const parsed = JSON.parse(payload);
               const delta = parsed.choices?.[0]?.delta?.content || '';
-              const partialFunctionCall = parsed.choices?.[0]?.delta?.function_call;
-              if (partialFunctionCall?.name) {
-                functionCallName = partialFunctionCall.name;
+              const partialToolCall = parsed.choices?.[0]?.delta?.tool_call || parsed.choices?.[0]?.delta?.function_call;
+              if (partialToolCall?.name) {
+                functionCallName = partialToolCall.name;
               }
-              if (partialFunctionCall?.arguments) {
-                functionCallArguments += partialFunctionCall.arguments;
+              if (partialToolCall?.arguments) {
+                functionCallArguments += partialToolCall.arguments;
+              }
+              const messageToolCall = parsed.choices?.[0]?.message?.tool_call || parsed.choices?.[0]?.message?.function_call;
+              if (!functionCallName && messageToolCall?.name) {
+                functionCallName = messageToolCall.name;
+              }
+              if (messageToolCall?.arguments) {
+                functionCallArguments += messageToolCall.arguments;
               }
               if (delta) {
                 assistantText += delta;

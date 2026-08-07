@@ -5,11 +5,9 @@ import { getUserFromBearerToken } from '@/lib/supabase-server';
 
 export async function POST(req: NextRequest) {
   const user = await getUserFromBearerToken(req.headers.get('authorization'));
-  if (!user) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const userId = user?.id ?? 'guest';
 
-  const rateLimit = checkRateLimit(`image-generate:${user.id}`);
+  const rateLimit = checkRateLimit(`image-generate:${userId}`);
   if (!rateLimit.allowed) {
     return Response.json({ error: 'Rate limit exceeded' }, { status: 429 });
   }
