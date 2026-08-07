@@ -196,27 +196,8 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 
 export default function HomePage() {
   const [mode, setMode] = useState<'Serious' | 'Wimpy'>('Serious');
-  const [profile, setProfile] = useState<ProfileState>(() => loadJson<ProfileState>('wimpyai-profile-v1', emptyProfile));
-  const [conversations, setConversations] = useState<Conversation[]>(() => {
-    if (typeof window === 'undefined') return [initialConversation];
-    try {
-      const saved = window.localStorage.getItem(getConversationStorageKey(profile.userId));
-      if (saved) {
-        const parsed = JSON.parse(saved) as unknown;
-        if (Array.isArray(parsed) && parsed.length) {
-          const typed = parsed.filter((entry): entry is Conversation => {
-            if (typeof entry !== 'object' || entry === null) return false;
-            const candidate = entry as Partial<Conversation>;
-            return typeof candidate.id === 'string' && typeof candidate.title === 'string' && Array.isArray(candidate.messages);
-          });
-          if (typed.length === parsed.length) return typed;
-        }
-      }
-    } catch {
-      // ignore invalid cache
-    }
-    return [initialConversation];
-  });
+  const [profile, setProfile] = useState<ProfileState>(emptyProfile);
+  const [conversations, setConversations] = useState<Conversation[]>([initialConversation]);
   const [activeConversationId, setActiveConversationId] = useState(initialConversation.id);
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -228,17 +209,12 @@ export default function HomePage() {
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
-  const [settings, setSettings] = useState<SettingsState>(() => loadJson<SettingsState>('wimpyai-settings-v1', emptySettings));
+  const [settings, setSettings] = useState<SettingsState>(emptySettings);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
   const [actionSheetMessageId, setActionSheetMessageId] = useState<string | null>(null);
   const [isInputFocused, setIsInputFocused] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    const dismissed = window.localStorage.getItem('wimpyai-auth-dismissed-v1');
-    const savedProfile = loadJson<ProfileState>('wimpyai-profile-v1', emptyProfile);
-    return !dismissed && !savedProfile.isConnected;
-  });
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -488,6 +464,17 @@ export default function HomePage() {
 
     void initializeAuth();
 
+    // load initial profile and settings from localStorage on client
+    handleProfileSync();
+    handleSettingsSync();
+    try {
+      const dismissed = window.localStorage.getItem('wimpyai-auth-dismissed-v1');
+      const savedProfile = loadJson<ProfileState>('wimpyai-profile-v1', emptyProfile);
+      setShowAuthModal(!dismissed && !savedProfile.isConnected);
+    } catch {
+      // ignore
+    }
+
     return () => {
       window.removeEventListener('wimpy-profile-sync', handleProfileSync);
       window.removeEventListener('wimpy-settings-sync', handleSettingsSync);
@@ -495,7 +482,7 @@ export default function HomePage() {
     };
   }, []);
 
-  const createConversation = () => {
+  const createConversation = async () => {
     const newConversation: Conversation = {
       id: createEntityId('conv'),
       title: 'New chat',
@@ -510,8 +497,12 @@ export default function HomePage() {
     setConversations((prev) => [newConversation, ...prev]);
     setActiveConversationId(newConversation.id);
     if (profile.isConnected && profile.userId) {
-      void persistConversationToSupabase(newConversation, profile.userId);
-      void persistMessageToSupabase(newConversation.id, newConversation.messages[0], profile.userId);
+      try {
+        await persistConversationToSupabase(newConversation, profile.userId);
+        await persistMessageToSupabase(newConversation.id, newConversation.messages[0], profile.userId);
+      } catch (e) {
+        console.error('Failed to persist new conversation', e);
+      }
     }
   };
 
@@ -579,9 +570,15 @@ export default function HomePage() {
     setIsStreaming(true);
 
     if (profile.isConnected && profile.userId) {
-      void persistConversationToSupabase(conversationToPersist, profile.userId);
-      void persistMessageToSupabase(conversationToPersist.id, userMessage, profile.userId);
-      void persistMessageToSupabase(conversationToPersist.id, assistantMessage, profile.userId);
+      try {
+        await persistConversationToSupabase(conversationToPersist, profile.userId);
+        await Promise.all([
+          persistMessageToSupabase(conversationToPersist.id, userMessage, profile.userId),
+          persistMessageToSupabase(conversationToPersist.id, assistantMessage, profile.userId),
+        ]);
+      } catch (e) {
+        console.error('Failed to persist conversation/messages', e);
+      }
     }
 
     try {
@@ -675,11 +672,15 @@ export default function HomePage() {
         )
       );
       if (profile.isConnected && profile.userId) {
-        void persistConversationToSupabase(
-          conversations.find((conversation) => conversation.id === activeConversationId) ?? conversationToPersist,
-          profile.userId
-        );
-        void updateMessageContentInSupabase(assistantMessage.id, 'I could not generate a reply right now.');
+        try {
+          await persistConversationToSupabase(
+            conversations.find((conversation) => conversation.id === activeConversationId) ?? conversationToPersist,
+            profile.userId
+          );
+          await updateMessageContentInSupabase(assistantMessage.id, 'I could not generate a reply right now.');
+        } catch (e) {
+          console.error('Failed to persist failure state', e);
+        }
       }
     } finally {
       setIsStreaming(false);
@@ -841,7 +842,7 @@ export default function HomePage() {
 
   return (
     <main className={settings.darkMode ? 'dark' : ''}>
-      <div className="flex min-h-[100dvh] flex-col overflow-hidden bg-[var(--bg)] text-[var(--ink)] transition-colors">
+      <div className="flex h-[100dvh] flex-col overflow-hidden bg-[var(--bg)] text-[var(--ink)] transition-colors">
         <div className="sticky top-0 z-20 shrink-0 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-sm">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 md:px-8">
             <button
