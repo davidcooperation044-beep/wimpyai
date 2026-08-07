@@ -35,7 +35,7 @@ create index if not exists idx_wai_messages_user_id on public.wai_messages(user_
 create index if not exists idx_wai_messages_created_at on public.wai_messages(created_at desc);
 
 -- Keep conversation updated_at in sync on message insert/update/delete or conversation update
-create function public.wai_refresh_conversation_updated_at() returns trigger as $$
+create or replace function public.wai_refresh_conversation_updated_at() returns trigger as $$
 begin
   update public.wai_conversations
   set updated_at = now()
@@ -44,17 +44,19 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists wai_messages_refresh_conversation_updated_at on public.wai_messages;
 create trigger wai_messages_refresh_conversation_updated_at
   after insert or update on public.wai_messages
   for each row execute function public.wai_refresh_conversation_updated_at();
 
-create function public.wai_conversation_updated_at_trigger() returns trigger as $$
+create or replace function public.wai_conversation_updated_at_trigger() returns trigger as $$
 begin
   new.updated_at = now();
   return new;
 end;
 $$ language plpgsql;
 
+drop trigger if exists wai_conversations_updated_at on public.wai_conversations;
 create trigger wai_conversations_updated_at
   before update on public.wai_conversations
   for each row execute function public.wai_conversation_updated_at_trigger();
@@ -63,18 +65,23 @@ create trigger wai_conversations_updated_at
 alter table public.wai_conversations enable row level security;
 alter table public.wai_messages enable row level security;
 
+drop policy if exists "Conversations are visible to owner" on public.wai_conversations;
 create policy "Conversations are visible to owner" on public.wai_conversations
   for select using (auth.uid() = user_id);
 
+drop policy if exists "Conversations are insertable by owner" on public.wai_conversations;
 create policy "Conversations are insertable by owner" on public.wai_conversations
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "Conversations are updatable by owner" on public.wai_conversations;
 create policy "Conversations are updatable by owner" on public.wai_conversations
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+drop policy if exists "Conversations are deletable by owner" on public.wai_conversations;
 create policy "Conversations are deletable by owner" on public.wai_conversations
   for delete using (auth.uid() = user_id);
 
+drop policy if exists "Messages are visible to conversation owner" on public.wai_messages;
 create policy "Messages are visible to conversation owner" on public.wai_messages
   for select using (
     exists (
@@ -85,6 +92,7 @@ create policy "Messages are visible to conversation owner" on public.wai_message
     )
   );
 
+drop policy if exists "Messages are insertable by conversation owner" on public.wai_messages;
 create policy "Messages are insertable by conversation owner" on public.wai_messages
   for insert with check (
     auth.uid() = user_id
@@ -95,6 +103,7 @@ create policy "Messages are insertable by conversation owner" on public.wai_mess
     )
   );
 
+drop policy if exists "Messages are updatable by conversation owner" on public.wai_messages;
 create policy "Messages are updatable by conversation owner" on public.wai_messages
   for update using (
     auth.uid() = user_id
@@ -112,6 +121,7 @@ create policy "Messages are updatable by conversation owner" on public.wai_messa
     )
   );
 
+drop policy if exists "Messages are deletable by conversation owner" on public.wai_messages;
 create policy "Messages are deletable by conversation owner" on public.wai_messages
   for delete using (
     auth.uid() = user_id
@@ -123,6 +133,7 @@ create policy "Messages are deletable by conversation owner" on public.wai_messa
   );
 
 -- Optional helper view to fetch conversations with their latest message and counts
+drop view if exists public.wai_conversation_summaries;
 create view public.wai_conversation_summaries as
 select
   c.id,
@@ -151,15 +162,19 @@ create index if not exists idx_subscriptions_user_id on public.subscriptions(use
 
 alter table public.subscriptions enable row level security;
 
+drop policy if exists "Subscriptions are visible to owner" on public.subscriptions;
 create policy "Subscriptions are visible to owner" on public.subscriptions
   for select using (auth.uid() = user_id);
 
+drop policy if exists "Subscriptions are insertable by owner" on public.subscriptions;
 create policy "Subscriptions are insertable by owner" on public.subscriptions
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "Subscriptions are updatable by owner" on public.subscriptions;
 create policy "Subscriptions are updatable by owner" on public.subscriptions
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+drop policy if exists "Subscriptions are deletable by owner" on public.subscriptions;
 create policy "Subscriptions are deletable by owner" on public.subscriptions
   for delete using (auth.uid() = user_id);
 
@@ -176,15 +191,19 @@ create index if not exists idx_quota_usage_user_window on public.quota_usage(use
 
 alter table public.quota_usage enable row level security;
 
+drop policy if exists "Quota usage is visible to owner" on public.quota_usage;
 create policy "Quota usage is visible to owner" on public.quota_usage
   for select using (auth.uid() = user_id);
 
+drop policy if exists "Quota usage is insertable by owner" on public.quota_usage;
 create policy "Quota usage is insertable by owner" on public.quota_usage
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "Quota usage is updatable by owner" on public.quota_usage;
 create policy "Quota usage is updatable by owner" on public.quota_usage
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+drop policy if exists "Quota usage is deletable by owner" on public.quota_usage;
 create policy "Quota usage is deletable by owner" on public.quota_usage
   for delete using (auth.uid() = user_id);
 
