@@ -1208,9 +1208,25 @@ export default function HomePage() {
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); setShowAuthModal(true); }}>
                   {profile.isConnected ? 'Account' : 'Sign in'}
                 </button>
-                <a href="/profile" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={closeSidebar}>
+                <a href="/profile" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={(event) => {
+                  closeSidebar();
+                  if (typeof window !== 'undefined') {
+                    window.location.href = '/profile';
+                  }
+                }}>
                   Profile
                 </a>
+                <button
+                  type="button"
+                  className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm flex items-center justify-between"
+                  onClick={() => {
+                    closeSidebar();
+                    setSettings((prev) => ({ ...prev, darkMode: !prev.darkMode }));
+                  }}
+                >
+                  <span>{settings.darkMode ? 'Light mode' : 'Dark mode'}</span>
+                  {settings.darkMode ? <SunMedium size={16} /> : <Moon size={16} />}
+                </button>
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); createConversation(); }}>
                   New chat
                 </button>
