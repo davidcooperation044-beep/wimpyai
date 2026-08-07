@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { type KeyboardEvent, type ChangeEvent } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -484,6 +485,8 @@ export default function HomePage() {
     window.location.href = url;
   };
 
+  const router = useRouter();
+
   const handleSubscriptionToggle = () => {
     if (!profile.isConnected) {
       setShowAuthModal(true);
@@ -603,11 +606,11 @@ export default function HomePage() {
 
   return (
     <main className={settings.darkMode ? 'dark' : ''}>
-      <div className="h-screen min-h-screen overflow-hidden bg-[var(--bg)] text-[var(--ink)] transition-colors">
-        <div className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-sm">
+      <div className="flex h-dvh flex-col overflow-hidden bg-[var(--bg)] text-[var(--ink)] transition-colors">
+        <div className="sticky top-0 z-20 shrink-0 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-sm">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 md:px-8">
             <button
-              className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm md:hidden"
+              className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm lg:hidden"
               onClick={openSidebar}
               aria-label="Open sidebar"
             >
@@ -621,11 +624,7 @@ export default function HomePage() {
             </div>
             <button
               className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] shadow-sm"
-              onClick={() => {
-                if (typeof window !== 'undefined') {
-                  window.location.href = '/profile';
-                }
-              }}
+              onClick={() => router.push('/profile')}
               aria-label="Open profile"
             >
               <UserCircle2 size={20} />
@@ -633,7 +632,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div className="relative h-[calc(100vh-96px)] overflow-hidden lg:flex lg:h-full lg:overflow-visible">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           <aside className="hidden lg:flex lg:w-80 lg:flex-col lg:border-r lg:border-[var(--border)] lg:bg-[var(--panel)] lg:shadow-sm lg:overflow-y-auto">
             <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-4">
               <div>
@@ -650,7 +649,7 @@ export default function HomePage() {
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => setShowAuthModal(true)}>
                   {profile.isConnected ? 'Account' : 'Sign in'}
                 </button>
-                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => window.location.href = '/profile'}>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => router.push('/profile')}>
                   Profile
                 </button>
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={createConversation}>
@@ -681,10 +680,10 @@ export default function HomePage() {
               </div>
             </div>
           </aside>
-          <div className="flex-1 overflow-hidden px-0 pb-24 pt-4 md:px-8 lg:px-10" style={{ transform: isInputFocused ? 'translateY(-10px)' : 'translateY(0)' }}>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-4 md:px-8 lg:px-10">
             <div
               ref={chatContainerRef}
-              className="h-full min-h-[50vh] overflow-y-auto overscroll-contain px-4 pb-4 md:px-0"
+              className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pb-4 md:px-0"
               style={{ paddingBottom: `${keyboardOffset + 24}px` }}
             >
               <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -884,7 +883,7 @@ export default function HomePage() {
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); setShowAuthModal(true); }}>
                   {profile.isConnected ? 'Account' : 'Sign in'}
                 </button>
-                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); window.location.assign('/profile'); }}>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); router.push('/profile'); }}>
                   Profile
                 </button>
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); createConversation(); }}>
