@@ -918,6 +918,11 @@ export default function HomePage() {
               href="/profile"
               className="z-30 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] shadow-sm"
               aria-label="Open profile"
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  window.location.href = '/profile';
+                }
+              }}
             >
               <UserCircle2 size={20} />
             </a>

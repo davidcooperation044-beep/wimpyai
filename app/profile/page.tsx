@@ -164,13 +164,17 @@ export default function ProfilePage() {
             <h1 className="text-2xl font-semibold">Profile and settings</h1>
           </div>
           <div className="flex items-center gap-4">
-            <button
-              type="button"
+            <a
+              href="/"
               className="rounded-full border border-[var(--border)] px-3 py-2 text-sm"
-              onClick={() => router.push('/')}
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  window.location.href = '/';
+                }
+              }}
             >
               Back to chat
-            </button>
+            </a>
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--accent)] text-xl font-semibold text-white">
               {profile.avatarInitials}
             </div>
