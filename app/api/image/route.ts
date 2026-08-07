@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'OpenRouter is not configured yet.' }, { status: 500 });
     }
 
-    const response = await fetch('https://openrouter.ai/api/v1/images/generations', {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -32,14 +32,51 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: modelRegistry.image,
-        prompt,
-        n: 1,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are WIMPY, built by Wimpy Cooperations. Generate a single image from the user prompt and return it as a direct image URL.',
+          },
+          {
+            role: 'user',
+            content: [{ type: 'text', text: prompt }],
+          },
+        ],
+        modalities: ['image'],
         size: '1024x1024',
       }),
     });
 
     const payload = await response.json();
-    const imageUrl = payload.data?.[0]?.url || '';
+    const message = payload.choices?.[0]?.message;
+    let imageUrl = '';
+
+    if (typeof message?.content === 'string') {
+      imageUrl = message.content.trim();
+    } else if (Array.isArray(message?.content)) {
+      for (const item of message.content) {
+        if (item?.type === 'image_url' && item?.image_url?.url) {
+          imageUrl = item.image_url.url;
+          break;
+        }
+        if (item?.type === 'text' && typeof item.text === 'string' && item.text.includes('http')) {
+          const match = item.text.match(/https?:\/\/[^\s]+/);
+          if (match) {
+            imageUrl = match[0];
+            break;
+          }
+        }
+      }
+    }
+
+    if (!imageUrl && Array.isArray(payload.data) && payload.data[0]?.url) {
+      imageUrl = payload.data[0].url;
+    }
+
+    if (!imageUrl) {
+      return Response.json({ error: 'Image generation failed.' }, { status: 500 });
+    }
+
     return Response.json({ imageUrl, alt: `Generated image for: ${prompt}` });
   } catch {
     return Response.json({ error: 'Image generation failed.' }, { status: 500 });

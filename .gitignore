@@ -6,3 +6,5 @@ out
 npm-debug.log*
 *.tsbuildinfo
 dev-server.log
+.env
+.env.local

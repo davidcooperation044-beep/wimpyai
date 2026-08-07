@@ -100,6 +100,94 @@ function loadJson<T>(key: string, fallback: T): T {
   }
 }
 
+function getConversationStorageKey(userId: string | null): string {
+  return userId ? `wimpyai-conversations-v1:${userId}` : 'wimpyai-conversations-v1:guest';
+}
+
+function isValidUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function createEntityId(prefix: string): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${prefix}-${Date.now()}`;
+}
+
+async function fetchUserConversations(userId: string): Promise<Conversation[] | null> {
+  const { data: conversationsData, error: conversationError } = await supabase
+    .from('wai_conversations')
+    .select('id,title,created_at,updated_at')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false });
+
+  if (conversationError || !conversationsData) {
+    return null;
+  }
+
+  const conversationIds = conversationsData.map((conversation: any) => conversation.id);
+  const { data: messagesData, error: messageError } = await supabase
+    .from('wai_messages')
+    .select('id,conversation_id,role,content,images,created_at')
+    .in('conversation_id', conversationIds)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (messageError || !messagesData) {
+    return null;
+  }
+
+  const messagesByConversation = messagesData.reduce<Record<string, Message[]>>((acc, message: any) => {
+    const conversationId = message.conversation_id;
+    if (!acc[conversationId]) acc[conversationId] = [];
+    acc[conversationId].push({
+      id: message.id,
+      role: message.role as MessageRole,
+      content: message.content,
+      images: Array.isArray(message.images) ? message.images : [],
+    });
+    return acc;
+  }, {});
+
+  return conversationsData.map((row: any) => ({
+    id: row.id,
+    title: row.title,
+    messages: messagesByConversation[row.id] ?? [],
+  }));
+}
+
+async function persistConversationToSupabase(conversation: Conversation, userId: string) {
+  if (!userId) return;
+  await supabase.from('wai_conversations').upsert(
+    {
+      id: conversation.id,
+      user_id: userId,
+      title: conversation.title,
+    },
+    { onConflict: 'id' }
+  );
+}
+
+async function persistMessageToSupabase(conversationId: string, message: Message, userId: string) {
+  if (!userId) return;
+  await supabase.from('wai_messages').upsert(
+    {
+      id: message.id,
+      conversation_id: conversationId,
+      user_id: userId,
+      role: message.role,
+      content: message.content,
+      images: message.images ?? [],
+    },
+    { onConflict: 'id' }
+  );
+}
+
+async function updateMessageContentInSupabase(messageId: string, content: string) {
+  await supabase.from('wai_messages').update({ content }).eq('id', messageId);
+}
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token;
@@ -108,10 +196,11 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 
 export default function HomePage() {
   const [mode, setMode] = useState<'Serious' | 'Wimpy'>('Serious');
+  const [profile, setProfile] = useState<ProfileState>(() => loadJson<ProfileState>('wimpyai-profile-v1', emptyProfile));
   const [conversations, setConversations] = useState<Conversation[]>(() => {
     if (typeof window === 'undefined') return [initialConversation];
     try {
-      const saved = window.localStorage.getItem('wimpyai-conversations-v1');
+      const saved = window.localStorage.getItem(getConversationStorageKey(profile.userId));
       if (saved) {
         const parsed = JSON.parse(saved) as unknown;
         if (Array.isArray(parsed) && parsed.length) {
@@ -139,7 +228,6 @@ export default function HomePage() {
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
-  const [profile, setProfile] = useState<ProfileState>(() => loadJson<ProfileState>('wimpyai-profile-v1', emptyProfile));
   const [settings, setSettings] = useState<SettingsState>(() => loadJson<SettingsState>('wimpyai-settings-v1', emptySettings));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
@@ -154,8 +242,10 @@ export default function HomePage() {
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const generalFileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const recognitionRef = useRef<any | null>(null);
 
   const activeConversation = useMemo(
     () => conversations.find((c) => c.id === activeConversationId) ?? conversations[0],
@@ -227,6 +317,96 @@ export default function HomePage() {
   }, [conversations, scrollToBottom]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    setRecordingSupported(Boolean(SpeechRecognition));
+  }, []);
+
+  const startRecording = () => {
+    if (typeof window === 'undefined') return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setTranscript('Voice input is not supported in this browser.');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+
+    recognition.onresult = (event: any) => {
+      const result = event.results[event.resultIndex];
+      const text = Array.from(result)
+        .map((item: any) => item.transcript)
+        .join('');
+
+      setTranscript(text);
+      setDraft(text);
+    };
+
+    recognition.onerror = () => {
+      setIsRecording(false);
+      recognition.stop();
+      recognitionRef.current = null;
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+      recognitionRef.current = null;
+    };
+
+    recognition.start();
+    recognitionRef.current = recognition;
+    setIsRecording(true);
+    setTranscript('Listening…');
+  };
+
+  const stopRecording = () => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    recognition.stop();
+    recognitionRef.current = null;
+    setIsRecording(false);
+  };
+
+  const toggleRecording = () => {
+    if (!recordingSupported) return;
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const storageKey = getConversationStorageKey(profile.userId);
+    try {
+      const saved = window.localStorage.getItem(storageKey);
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as unknown;
+      if (Array.isArray(parsed) && parsed.length) {
+        setConversations(parsed as Conversation[]);
+      }
+    } catch {
+      // ignore invalid cache
+    }
+
+    const userId = profile.userId;
+    if (!profile.isConnected || !userId) return;
+
+    const loadRemote = async () => {
+      const remoteConversations = await fetchUserConversations(userId);
+      if (remoteConversations && remoteConversations.length) {
+        setConversations(remoteConversations);
+      }
+    };
+
+    void loadRemote();
+  }, [profile.isConnected, profile.userId]);
+
+  useEffect(() => {
     const handler = (event: Event) => {
       const installEvent = event as BeforeInstallPromptEvent;
       if (typeof installEvent.prompt === 'function') {
@@ -250,8 +430,8 @@ export default function HomePage() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem('wimpyai-conversations-v1', JSON.stringify(conversations));
-  }, [conversations]);
+    window.localStorage.setItem(getConversationStorageKey(profile.userId), JSON.stringify(conversations));
+  }, [conversations, profile.userId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -317,11 +497,11 @@ export default function HomePage() {
 
   const createConversation = () => {
     const newConversation: Conversation = {
-      id: `conv-${Date.now()}`,
+      id: createEntityId('conv'),
       title: 'New chat',
       messages: [
         {
-          id: `msg-${Date.now()}`,
+          id: createEntityId('msg'),
           role: 'assistant',
           content: 'I\'m WIMPY, built by Wimpy Cooperations. What would you like to work on?',
         },
@@ -329,6 +509,10 @@ export default function HomePage() {
     };
     setConversations((prev) => [newConversation, ...prev]);
     setActiveConversationId(newConversation.id);
+    if (profile.isConnected && profile.userId) {
+      void persistConversationToSupabase(newConversation, profile.userId);
+      void persistMessageToSupabase(newConversation.id, newConversation.messages[0], profile.userId);
+    }
   };
 
   const handleCloseWelcome = () => {
@@ -342,31 +526,63 @@ export default function HomePage() {
     if ((!draft.trim() && !attachments.length) || isStreaming) return;
     const content = draft.trim();
     const userMessage: Message = {
-      id: `msg-${Date.now()}`,
+      id: createEntityId('msg'),
       role: 'user',
       content: content || (attachments.length > 0 ? `Please describe the attached image${attachments.length > 1 ? 's' : ''}.` : ''),
       images: attachments.map((attachment) => attachment.src),
     };
-    const assistantId = `msg-${Date.now() + 1}`;
+    const assistantMessage: Message = {
+      id: createEntityId('msg'),
+      role: 'assistant',
+      content: '',
+      images: [],
+    };
+
+    const updatedConversation = conversations.find((conversation) => conversation.id === activeConversationId);
+    const updatedMessages = updatedConversation
+      ? [
+          ...updatedConversation.messages,
+          userMessage,
+          assistantMessage,
+        ]
+      : [userMessage, assistantMessage];
+
+    const conversationToPersist: Conversation = updatedConversation
+      ? {
+          ...updatedConversation,
+          title:
+            updatedConversation.messages.length === 1 && updatedConversation.title === 'New chat'
+              ? (content || attachments[0]?.name || 'New chat').slice(0, 40)
+              : updatedConversation.title,
+          messages: updatedMessages,
+        }
+      : {
+          id: createEntityId('conv'),
+          title: (content || attachments[0]?.name || 'New chat').slice(0, 40),
+          messages: updatedMessages,
+        };
 
     setConversations((prev) =>
       prev.map((conversation) =>
         conversation.id === activeConversationId
-          ? {
-              ...conversation,
-              title:
-                conversation.messages.length === 1 && conversation.title === 'New chat'
-                  ? (content || attachments[0]?.name || 'New chat').slice(0, 40)
-                  : conversation.title,
-              messages: [...conversation.messages, userMessage, { id: assistantId, role: 'assistant', content: '' }],
-            }
+          ? conversationToPersist
           : conversation
       )
     );
 
+    if (!updatedConversation) {
+      setActiveConversationId(conversationToPersist.id);
+    }
+
     setDraft('');
     setAttachments([]);
     setIsStreaming(true);
+
+    if (profile.isConnected && profile.userId) {
+      void persistConversationToSupabase(conversationToPersist, profile.userId);
+      void persistMessageToSupabase(conversationToPersist.id, userMessage, profile.userId);
+      void persistMessageToSupabase(conversationToPersist.id, assistantMessage, profile.userId);
+    }
 
     try {
       const authHeaders = await getAuthHeaders();
@@ -416,15 +632,24 @@ export default function HomePage() {
           try {
             const parsed = JSON.parse(payload);
             const delta = parsed.delta || '';
+            const imageUrl = parsed.imageUrl || '';
             if (delta) {
               accumulated += delta;
+            }
+            if (delta || imageUrl) {
               setConversations((prev) =>
                 prev.map((conversation) =>
                   conversation.id === activeConversationId
                     ? {
                         ...conversation,
                         messages: conversation.messages.map((message) =>
-                          message.id === assistantId ? { ...message, content: accumulated } : message
+                          message.id === assistantMessage.id
+                            ? {
+                                ...message,
+                                content: accumulated || (imageUrl ? 'Here is your image:' : ''),
+                                imageUrl: imageUrl || message.imageUrl,
+                              }
+                            : message
                         ),
                       }
                     : conversation
@@ -443,12 +668,19 @@ export default function HomePage() {
             ? {
                 ...conversation,
                 messages: conversation.messages.map((message) =>
-                  message.id === assistantId ? { ...message, content: 'I could not generate a reply right now.' } : message
+                  message.id === assistantMessage.id ? { ...message, content: 'I could not generate a reply right now.' } : message
                 ),
               }
             : conversation
         )
       );
+      if (profile.isConnected && profile.userId) {
+        void persistConversationToSupabase(
+          conversations.find((conversation) => conversation.id === activeConversationId) ?? conversationToPersist,
+          profile.userId
+        );
+        void updateMessageContentInSupabase(assistantMessage.id, 'I could not generate a reply right now.');
+      }
     } finally {
       setIsStreaming(false);
     }
@@ -566,10 +798,13 @@ export default function HomePage() {
     }
   };
 
-  const handleOpenFilePicker = () => {
-    if (typeof window !== 'undefined') {
-      fileInputRef.current?.click();
+  const handleOpenFilePicker = (type: 'image' | 'file') => {
+    if (typeof window === 'undefined') return;
+    if (type === 'image') {
+      imageFileInputRef.current?.click();
+      return;
     }
+    generalFileInputRef.current?.click();
   };
 
   const handleAttach = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -811,10 +1046,10 @@ export default function HomePage() {
                     </button>
                     <button
                       type="button"
-                      className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
+                      className={`flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm ${isRecording ? 'ring-2 ring-[var(--accent)]' : ''}`}
                       onClick={() => {
                         if ('vibrate' in navigator) navigator.vibrate(10);
-                        setIsRecording((prev) => !prev);
+                        toggleRecording();
                       }}
                       aria-label="Toggle voice input"
                     >
@@ -959,10 +1194,10 @@ export default function HomePage() {
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={handleOpenCamera}>
                   Take Photo
                 </button>
-                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={handleOpenFilePicker}>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={() => handleOpenFilePicker('image')}>
                   Photo Library
                 </button>
-                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={handleOpenFilePicker}>
+                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={() => handleOpenFilePicker('file')}>
                   File
                 </button>
               </div>
@@ -987,7 +1222,8 @@ export default function HomePage() {
           </div>
         ) : null}
 
-        <input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={handleAttach} />
+        <input ref={imageFileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={handleAttach} />
+        <input ref={generalFileInputRef} type="file" multiple className="hidden" onChange={handleAttach} />
         <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleAttach} />
 
         {installPromptEvent ? (

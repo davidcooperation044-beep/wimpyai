@@ -221,6 +221,15 @@ export default function ProfilePage() {
                 >
                   Export data
                 </button>
+                {profile.isConnected ? (
+                  <button
+                    type="button"
+                    className="rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm"
+                    onClick={handleSignOut}
+                  >
+                    Sign out
+                  </button>
+                ) : null}
               </div>
             </div>
           </div>

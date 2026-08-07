@@ -1,5 +1,5 @@
 export const modelRegistry = {
-  chat: 'openrouter/auto',
-  vision: 'openrouter/auto',
-  image: 'openrouter/auto',
+  chat: 'gpt-4o-mini',
+  vision: 'gpt-4o-mini',
+  image: 'gpt-image-1',
 };
