@@ -584,6 +584,18 @@ export default function HomePage() {
 
     try {
       const authHeaders = await getAuthHeaders();
+      // Send prior turns of THIS conversation as context so the model has
+      // memory across messages. Exclude the new user/assistant pair we just
+      // appended locally (those aren't real replies yet) and any empty
+      // placeholder messages.
+      const priorMessages = (updatedConversation?.messages ?? []).filter(
+        (message) => message.content && message.content.trim().length > 0
+      );
+      const history = priorMessages.map((message) => ({
+        role: message.role,
+        content: message.content,
+      }));
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -593,6 +605,7 @@ export default function HomePage() {
         body: JSON.stringify({
           prompt: content,
           persona: mode,
+          history,
           attachments: attachments.map((attachment) => ({
             url: attachment.src,
             filename: attachment.name,
