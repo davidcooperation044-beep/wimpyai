@@ -17,8 +17,20 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { prompt, persona = 'Serious', attachments = [] } = body;
+  const { prompt, persona = 'Serious', attachments = [], history = [] } = body;
   const quota = getQuotaState(0, false);
+
+  // Sanitize/clip incoming history so we don't blow up token usage and so we
+  // only ever forward well-formed {role, content} entries to OpenRouter.
+  // Images from older turns are intentionally dropped here (kept as text-only
+  // context) — only the *current* turn's attachments are sent as images.
+  const MAX_HISTORY_MESSAGES = 20;
+  const sanitizedHistory = Array.isArray(history)
+    ? history
+        .filter((m: any) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim().length > 0)
+        .slice(-MAX_HISTORY_MESSAGES)
+        .map((m: any) => ({ role: m.role, content: m.content }))
+    : [];
 
   if (!process.env.OPENROUTER_API_KEY) {
     return Response.json({ error: 'OpenRouter is not configured yet.', requestId }, { status: 500 });
@@ -84,12 +96,17 @@ export async function POST(req: NextRequest) {
       messages: [
         {
           role: 'system',
-          content: `You are WIMPY, built by Wimpy Cooperations. Today's date is ${today}. You can generate images when asked — use the generate_image tool.`,
+          content: `You are WIMPY, built by Wimpy Cooperations. Today's date is ${today}. You can generate images when asked — use the generate_image tool. Use the prior conversation turns provided to you as context; remember details the user already told you and stay consistent with earlier answers.`,
         },
         {
           role: 'system',
           content: `Respond in ${persona} mode. Keep answers accurate and useful.`,
         },
+        {
+          role: 'system',
+          content: `Formatting rule for math: whenever your answer includes a mathematical expression, equation, or calculation, format it as LaTeX. Use $...$ for inline math and $$...$$ on its own line for standalone/display equations and multi-step derivations (one step per line inside the $$ block where helpful). Never write math as plain unformatted text.`,
+        },
+        ...sanitizedHistory,
         userMessage,
       ],
     }),
@@ -128,8 +145,9 @@ export async function POST(req: NextRequest) {
 
       const decoder = new TextDecoder();
       let buffer = '';
-      let functionCallName: string | null = null;
-      let functionCallArguments = '';
+      // OpenRouter/OpenAI stream tool calls as an ARRAY under delta.tool_calls,
+      // keyed by index, split across many chunks. Accumulate per-index.
+      const toolCalls: Record<number, { name: string | null; arguments: string }> = {};
       let assistantText = '';
 
       try {
@@ -149,20 +167,29 @@ export async function POST(req: NextRequest) {
             try {
               const parsed = JSON.parse(payload);
               const delta = parsed.choices?.[0]?.delta?.content || '';
-              const partialToolCall = parsed.choices?.[0]?.delta?.tool_call || parsed.choices?.[0]?.delta?.function_call;
-              if (partialToolCall?.name) {
-                functionCallName = partialToolCall.name;
+
+              // Streaming tool calls: delta.tool_calls is an array of partials.
+              const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls;
+              if (Array.isArray(deltaToolCalls)) {
+                for (const tc of deltaToolCalls) {
+                  const idx = typeof tc.index === 'number' ? tc.index : 0;
+                  if (!toolCalls[idx]) toolCalls[idx] = { name: null, arguments: '' };
+                  if (tc.function?.name) toolCalls[idx].name = tc.function.name;
+                  if (tc.function?.arguments) toolCalls[idx].arguments += tc.function.arguments;
+                }
               }
-              if (partialToolCall?.arguments) {
-                functionCallArguments += partialToolCall.arguments;
+
+              // Non-streaming fallback: some providers put the full tool call
+              // directly on the final message object instead of deltas.
+              const messageToolCalls = parsed.choices?.[0]?.message?.tool_calls;
+              if (Array.isArray(messageToolCalls)) {
+                messageToolCalls.forEach((tc: any, idx: number) => {
+                  if (!toolCalls[idx]) toolCalls[idx] = { name: null, arguments: '' };
+                  if (tc.function?.name) toolCalls[idx].name = tc.function.name;
+                  if (tc.function?.arguments) toolCalls[idx].arguments += tc.function.arguments;
+                });
               }
-              const messageToolCall = parsed.choices?.[0]?.message?.tool_call || parsed.choices?.[0]?.message?.function_call;
-              if (!functionCallName && messageToolCall?.name) {
-                functionCallName = messageToolCall.name;
-              }
-              if (messageToolCall?.arguments) {
-                functionCallArguments += messageToolCall.arguments;
-              }
+
               if (delta) {
                 assistantText += delta;
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta, requestId })}\n\n`));
@@ -173,18 +200,21 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        if (functionCallName === 'generate_image') {
+        const imageCall = Object.values(toolCalls).find((tc) => tc.name === 'generate_image');
+        if (imageCall) {
           try {
-            const functionArgs = JSON.parse(functionCallArguments || '{}');
+            const functionArgs = JSON.parse(imageCall.arguments || '{}');
             const imageResponse = await generateImage(functionArgs.prompt, functionArgs.size || '1024x1024');
             if (imageResponse?.imageUrl) {
               if (!assistantText.trim()) {
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: 'Here is your image:', requestId })}\n\n`));
               }
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ imageUrl: imageResponse.imageUrl, requestId })}\n\n`));
+            } else {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: '\n\n(Image generation returned no image — please try again.)', requestId })}\n\n`));
             }
-          } catch {
-            // ignore image generation failure; let the chat stream remain as-is
+          } catch (err) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: '\n\n(Image generation failed.)', requestId })}\n\n`));
           }
         }
 
