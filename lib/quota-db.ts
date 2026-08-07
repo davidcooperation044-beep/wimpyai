@@ -35,26 +35,16 @@ export async function getUserPlanIsPro(user: any) {
     return true;
   }
 
-  const planJoinResult = await supabaseServer
-    .from('subscriptions')
-    .select('plan_id(name)')
+  const { data, error } = await supabaseServer
+    .from('wimpyai_user_subscription')
+    .select('effective_plan')
     .eq('user_id', user.id)
     .maybeSingle();
 
-  if (!planJoinResult.error && planJoinResult.data?.plan_id?.name) {
-    return planJoinResult.data.plan_id.name === 'Pro';
-  }
-
-  const legacyResult = await supabaseServer
-    .from('subscriptions')
-    .select('plan')
-    .eq('user_id', user.id)
-    .maybeSingle();
-
-  if (legacyResult.error) {
-    console.error('[quota-db] failed to read subscription plan', legacyResult.error);
+  if (error) {
+    console.error('[quota-db] failed to read subscription plan', error);
     return false;
   }
 
-  return legacyResult.data?.plan === 'Pro';
+  return data?.effective_plan === 'Pro';
 }
