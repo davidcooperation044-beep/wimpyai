@@ -957,6 +957,14 @@ export default function HomePage() {
                 >
                   Profile
                 </a>
+                <button
+                  type="button"
+                  className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm flex items-center justify-between"
+                  onClick={() => setSettings((prev) => ({ ...prev, darkMode: !prev.darkMode }))}
+                >
+                  <span>{settings.darkMode ? 'Light mode' : 'Dark mode'}</span>
+                  {settings.darkMode ? <SunMedium size={16} /> : <Moon size={16} />}
+                </button>
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={createConversation}>
                   New chat
                 </button>
