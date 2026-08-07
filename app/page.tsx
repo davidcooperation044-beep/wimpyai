@@ -914,13 +914,13 @@ export default function HomePage() {
               <p className="text-sm font-semibold">WimpyAI</p>
               <p className="text-[11px] text-[var(--muted)]">Tap to chat instantly</p>
             </div>
-            <Link
+            <a
               href="/profile"
               className="z-30 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] shadow-sm"
               aria-label="Open profile"
             >
               <UserCircle2 size={20} />
-            </Link>
+            </a>
           </div>
         </div>
 
@@ -1187,9 +1187,9 @@ export default function HomePage() {
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); setShowAuthModal(true); }}>
                   {profile.isConnected ? 'Account' : 'Sign in'}
                 </button>
-                <Link href="/profile" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={closeSidebar}>
+                <a href="/profile" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={closeSidebar}>
                   Profile
-                </Link>
+                </a>
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => { closeSidebar(); createConversation(); }}>
                   New chat
                 </button>
