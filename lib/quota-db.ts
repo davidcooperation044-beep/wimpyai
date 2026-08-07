@@ -35,16 +35,26 @@ export async function getUserPlanIsPro(user: any) {
     return true;
   }
 
-  const { data, error } = await supabaseServer
+  const planJoinResult = await supabaseServer
+    .from('subscriptions')
+    .select('plan_id(name)')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (!planJoinResult.error && planJoinResult.data?.plan_id?.name) {
+    return planJoinResult.data.plan_id.name === 'Pro';
+  }
+
+  const legacyResult = await supabaseServer
     .from('subscriptions')
     .select('plan')
     .eq('user_id', user.id)
     .maybeSingle();
 
-  if (error) {
-    console.error('[quota-db] failed to read subscription plan', error);
+  if (legacyResult.error) {
+    console.error('[quota-db] failed to read subscription plan', legacyResult.error);
     return false;
   }
 
-  return data?.plan === 'Pro';
+  return legacyResult.data?.plan === 'Pro';
 }

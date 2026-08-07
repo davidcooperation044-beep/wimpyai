@@ -48,17 +48,37 @@ export async function POST(req: NextRequest) {
     return Response.json(data, { status: upstream.status });
   }
 
-  await supabaseServer.from('subscriptions').upsert(
-    {
-      user_id: user.id,
-      product_name: 'wimpyai',
-      plan: planName,
-      status: 'active',
-      current_period_end: data.current_period_end ?? null,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_id,product_name' }
-  );
+  let planId: string | null = null;
+  const { data: planData, error: planError } = await supabaseServer
+    .from('plans')
+    .select('id')
+    .eq('product_name', 'wimpyai')
+    .eq('name', planName)
+    .maybeSingle();
+
+  if (planError) {
+    console.error('[wimpy-pay] failed to resolve plan_id', planError);
+  } else if (planData?.id) {
+    planId = planData.id;
+  }
+
+  const subscriptionPayload: any = {
+    user_id: user.id,
+    product_name: 'wimpyai',
+    status: 'active',
+    current_period_end: data.current_period_end ?? null,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (planId) {
+    subscriptionPayload.plan_id = planId;
+  } else {
+    subscriptionPayload.plan = planName;
+  }
+
+  await supabaseServer.from('subscriptions').upsert(subscriptionPayload, {
+    onConflict: 'user_id',
+  });
 
   const existingAppMetadata = typeof user.app_metadata === 'object' && user.app_metadata !== null ? user.app_metadata : {};
   await supabaseServer.auth.admin.updateUserById(user.id, {
