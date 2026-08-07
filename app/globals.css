@@ -37,6 +37,15 @@ body {
 
 html, body {
   height: 100%;
-  overflow: hidden;
+  /* Temporarily allow document scrolling while we verify inner-shell scrolling works.
+     Revert to `overflow: hidden` once layout is validated. */
+  overflow: auto;
   overscroll-behavior: none;
+}
+
+/* App shell ensures a reliable fallback for environments that mishandle dvh (iframes, previews).
+   Order: older `100vh` first, then `100dvh` overrides it where supported. */
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
 }

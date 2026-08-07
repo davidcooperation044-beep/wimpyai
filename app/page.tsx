@@ -842,7 +842,7 @@ export default function HomePage() {
 
   return (
     <main className={settings.darkMode ? 'dark' : ''}>
-      <div className="flex h-[100dvh] flex-col overflow-hidden bg-[var(--bg)] text-[var(--ink)] transition-colors">
+      <div className="flex app-shell flex-col overflow-hidden bg-[var(--bg)] text-[var(--ink)] transition-colors">
         <div className="sticky top-0 z-20 shrink-0 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-sm">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 md:px-8">
             <button
