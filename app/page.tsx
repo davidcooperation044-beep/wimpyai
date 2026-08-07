@@ -622,13 +622,13 @@ export default function HomePage() {
               <p className="text-sm font-semibold">WimpyAI</p>
               <p className="text-[11px] text-[var(--muted)]">Tap to chat instantly</p>
             </div>
-            <button
-              className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] shadow-sm"
-              onClick={() => router.push('/profile')}
+            <Link
+              href="/profile"
+              className="z-30 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] shadow-sm"
               aria-label="Open profile"
             >
               <UserCircle2 size={20} />
-            </button>
+            </Link>
           </div>
         </div>
 
@@ -680,25 +680,25 @@ export default function HomePage() {
               </div>
             </div>
           </aside>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-4 md:px-8 lg:px-10">
-            <div
-              ref={chatContainerRef}
-              className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pb-4 md:px-0"
-              style={{ paddingBottom: `${keyboardOffset + 24}px` }}
-            >
-              <div className="mx-auto flex max-w-3xl flex-col gap-4">
-                <div className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
-                  <div>
-                    <p className="text-sm font-semibold">{mode} mode</p>
-                    <p className="text-sm text-[var(--muted)]">{isBusy ? 'WIMPY is thinking…' : 'Calm, precise, and built by Wimpy Cooperations.'}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button className={`rounded-full px-3 py-1.5 text-sm ${mode === 'Serious' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-strong)]'}`} onClick={() => setMode('Serious')}>Serious</button>
-                    <button className={`rounded-full px-3 py-1.5 text-sm ${mode === 'Wimpy' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-strong)]'}`} onClick={() => setMode('Wimpy')}>Wimpy</button>
-                  </div>
+          <div className="flex min-h-0 flex-1 flex-col px-0 pb-0 pt-4 md:px-8 lg:px-10">
+            <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 sm:px-6">
+              <div className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold">{mode} mode</p>
+                  <p className="text-sm text-[var(--muted)]">{isBusy ? 'WIMPY is thinking…' : 'Calm, precise, and built by Wimpy Cooperations.'}</p>
                 </div>
+                <div className="flex items-center gap-2">
+                  <button className={`rounded-full px-3 py-1.5 text-sm ${mode === 'Serious' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-strong)]'}`} onClick={() => setMode('Serious')}>Serious</button>
+                  <button className={`rounded-full px-3 py-1.5 text-sm ${mode === 'Wimpy' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-strong)]'}`} onClick={() => setMode('Wimpy')}>Wimpy</button>
+                </div>
+              </div>
 
-                <div className="flex-1 min-h-0 overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-4 shadow-sm">
+              <div className="relative mx-auto w-full max-w-3xl flex h-[min(72vh,calc(100vh-12rem))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-black/5">
+                <div
+                  ref={chatContainerRef}
+                  className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 md:px-0"
+                  style={{ paddingBottom: '220px' }}
+                >
                   <div className="mx-auto flex max-w-2xl flex-col gap-4">
                     {isBusy && pendingAssistantMessage?.role === 'assistant' && !pendingAssistantMessage.content.trim() ? (
                       <article className="flex gap-3">
@@ -779,80 +779,83 @@ export default function HomePage() {
                     })}
                   </div>
                 </div>
-              </div>
-            </div>
-            <div className="sticky bottom-0 z-10 mt-4 rounded-t-3xl border border-[var(--border)] border-b-0 bg-[var(--panel)] p-4 shadow-[0_-12px_30px_-20px_rgba(0,0,0,0.18)]" style={{ marginBottom: `env(safe-area-inset-bottom)` }}>
-              {offline ? (
-                <div className="mb-3 rounded-2xl border border-red-300 bg-red-100 px-3 py-2 text-sm text-red-700">
-                  You are offline. Messages will send when connection returns.
-                </div>
-              ) : null}
-              {attachments.length ? (
-                <div className="mb-3 space-y-2">
-                  {attachments.map((attachment, index) => (
-                    <div key={`${attachment.name}-${index}`} className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm">
-                      <span className="truncate">{attachment.name}</span>
-                      <button
-                        className="text-[var(--muted)]"
-                        onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== index))}
-                        type="button"
-                      >
-                        Remove
-                      </button>
+                <div
+                  className="absolute inset-x-0 bottom-0 z-10 border-t border-[var(--border)] bg-[var(--panel)] p-4"
+                  style={{ bottom: keyboardOffset ? `${keyboardOffset}px` : 0, paddingBottom: `env(safe-area-inset-bottom)` }}
+                >
+                  {offline ? (
+                    <div className="mb-3 rounded-2xl border border-red-300 bg-red-100 px-3 py-2 text-sm text-red-700">
+                      You are offline. Messages will send when connection returns.
                     </div>
-                  ))}
+                  ) : null}
+                  {attachments.length ? (
+                    <div className="mb-3 space-y-2">
+                      {attachments.map((attachment, index) => (
+                        <div key={`${attachment.name}-${index}`} className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm">
+                          <span className="truncate">{attachment.name}</span>
+                          <button
+                            className="text-[var(--muted)]"
+                            onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== index))}
+                            type="button"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
+                      onClick={handleAttachmentButton}
+                      aria-label="Attach media"
+                    >
+                      <Plus size={20} />
+                    </button>
+                    <button
+                      type="button"
+                      className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
+                      onClick={() => {
+                        if ('vibrate' in navigator) navigator.vibrate(10);
+                        setIsRecording((prev) => !prev);
+                      }}
+                      aria-label="Toggle voice input"
+                    >
+                      <Mic2 size={20} />
+                    </button>
+                    <textarea
+                      ref={inputRef}
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      onFocus={() => setIsInputFocused(true)}
+                      onBlur={() => setIsInputFocused(false)}
+                      rows={1}
+                      className="min-h-[44px] flex-1 resize-none rounded-3xl border border-[var(--border)] bg-transparent px-4 py-3 text-base leading-6 outline-none focus:border-[var(--accent)]"
+                      placeholder={isBusy ? 'WIMPY is responding…' : 'Ask WimpyAI anything…'}
+                      disabled={isBusy}
+                      style={{ fontSize: '16px' }}
+                      aria-label="Message input"
+                    />
+                    <button
+                      className="flex h-12 min-w-[52px] items-center justify-center rounded-3xl bg-[var(--accent)] text-white shadow-sm"
+                      onClick={() => void sendMessage()}
+                      disabled={isBusy || (!draft.trim() && !attachments.length)}
+                      aria-label="Send message"
+                    >
+                      {isBusy ? (
+                        <span className="flex items-center gap-1">
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.2s]" />
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.1s]" />
+                          <span className="h-2 w-2 animate-bounce rounded-full bg-white" />
+                        </span>
+                      ) : (
+                        <SendHorizontal size={20} />
+                      )}
+                    </button>
+                  </div>
                 </div>
-              ) : null}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
-                  onClick={handleAttachmentButton}
-                  aria-label="Attach media"
-                >
-                  <Plus size={20} />
-                </button>
-                <button
-                  type="button"
-                  className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
-                  onClick={() => {
-                    if ('vibrate' in navigator) navigator.vibrate(10);
-                    setIsRecording((prev) => !prev);
-                  }}
-                  aria-label="Toggle voice input"
-                >
-                  <Mic2 size={20} />
-                </button>
-                <textarea
-                  ref={inputRef}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onFocus={() => setIsInputFocused(true)}
-                  onBlur={() => setIsInputFocused(false)}
-                  rows={1}
-                  className="min-h-[44px] flex-1 resize-none rounded-3xl border border-[var(--border)] bg-transparent px-4 py-3 text-base leading-6 outline-none focus:border-[var(--accent)]"
-                  placeholder={isBusy ? 'WIMPY is responding…' : 'Ask WimpyAI anything…'}
-                  disabled={isBusy}
-                  style={{ fontSize: '16px' }}
-                  aria-label="Message input"
-                />
-                <button
-                  className="flex h-12 min-w-[52px] items-center justify-center rounded-3xl bg-[var(--accent)] text-white shadow-sm"
-                  onClick={() => void sendMessage()}
-                  disabled={isBusy || (!draft.trim() && !attachments.length)}
-                  aria-label="Send message"
-                >
-                  {isBusy ? (
-                    <span className="flex items-center gap-1">
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.2s]" />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.1s]" />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-white" />
-                    </span>
-                  ) : (
-                    <SendHorizontal size={20} />
-                  )}
-                </button>
               </div>
             </div>
           </div>
