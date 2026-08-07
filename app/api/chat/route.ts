@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
       tools: [
         {
           name: 'generate_image',
-          type: 'tool',
+          type: 'function',
           description: 'Generate an image from a text prompt and return the image URL.',
           parameters: {
             type: 'object',
