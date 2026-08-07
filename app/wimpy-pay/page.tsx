@@ -120,21 +120,7 @@ export default function WimpyPayCompletePage() {
         const data = await response.json();
 
         if (response.ok && data.plan === 'Pro') {
-          const updatedProfile = {
-            ...loadJson('wimpyai-profile-v1', {
-              isConnected: true,
-              userId: null,
-              displayName: 'Guest',
-              avatarInitials: 'G',
-              plan: 'Free',
-              subscriptionStatus: 'inactive',
-              lastLogin: null,
-            }),
-            plan: 'Pro',
-            subscriptionStatus: 'active',
-          };
-          window.localStorage.setItem('wimpyai-profile-v1', JSON.stringify(updatedProfile));
-          window.dispatchEvent(new Event('wimpy-profile-sync'));
+          syncProfileToPro();
           setMessage('Your WimpyAI Pro subscription is now active! Redirecting you back to the app...');
           window.setTimeout(() => router.replace('/'), 1500);
           return;
