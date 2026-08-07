@@ -30,14 +30,37 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: modelRegistry.image,
+        tool_choice: 'auto',
+        tools: [
+          {
+            name: 'generate_image',
+            type: 'tool',
+            description: 'Generate an image from a text prompt and return it as a direct image URL.',
+            parameters: {
+              type: 'object',
+              properties: {
+                prompt: {
+                  type: 'string',
+                  description: 'The text prompt to generate an image from.',
+                },
+                size: {
+                  type: 'string',
+                  enum: ['256x256', '512x512', '1024x1024'],
+                  description: 'The requested image size.',
+                },
+              },
+              required: ['prompt'],
+            },
+          },
+        ],
         messages: [
           {
             role: 'system',
-            content: 'You are WIMPY, built by Wimpy Cooperations. Generate a single image from the user prompt and return it as a direct image URL.',
+            content: 'You are WIMPY, built by Wimpy Cooperations. Generate a single image from the user prompt using the generate_image tool and return a direct image URL.',
           },
           {
             role: 'user',
-            content: [{ type: 'text', text: prompt }],
+            content: prompt,
           },
         ],
         modalities: ['image'],
