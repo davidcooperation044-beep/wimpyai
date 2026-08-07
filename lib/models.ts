@@ -1,5 +1,5 @@
 export const modelRegistry = {
   chat: 'openai/gpt-4o-mini',
   vision: 'openai/gpt-4o-mini',
-  image: 'openai/gpt-image-1',
+  image: 'google/gemini-3.1-flash-image-preview',
 };

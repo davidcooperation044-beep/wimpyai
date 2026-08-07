@@ -220,17 +220,31 @@ export async function POST(req: NextRequest) {
         if (imageCall) {
           try {
             const functionArgs = JSON.parse(imageCall.arguments || '{}');
-            const imageResponse = await generateImage(functionArgs.prompt, functionArgs.size || '1024x1024');
+            const imageResponse = await generateImage(functionArgs.prompt, functionArgs.size);
+
             if (imageResponse?.imageUrl) {
-              if (!assistantText.trim()) {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: 'Here is your image:', requestId, quota })}\n\n`));
-              }
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ imageUrl: imageResponse.imageUrl, requestId, quota })}\n\n`));
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ imageUrl: imageResponse.imageUrl, requestId, quota })}\n\n`
+                )
+              );
             } else {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: '\n\n(Image generation returned no image — please try again.)', requestId, quota })}\n\n`));
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    delta: '\n\n(Image generation returned no image — please try again.)',
+                    requestId,
+                    quota,
+                  })}\n\n`
+                )
+              );
             }
-          } catch (err) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: '\n\n(Image generation failed.)', requestId, quota })}\n\n`));
+          } catch {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ delta: '\n\n(Image generation failed.)', requestId, quota })}\n\n`
+              )
+            );
           }
         }
 
@@ -254,56 +268,39 @@ export async function POST(req: NextRequest) {
   });
 }
 
-async function generateImage(prompt: string, size: string) {
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+async function generateImage(prompt: string, size: string = '1024x1024') {
+  const response = await fetch('https://openrouter.ai/api/v1/images', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'HTTP-Referer': 'https://wimpyai.example',
-      'X-Title': 'WimpyAI',
     },
     body: JSON.stringify({
       model: modelRegistry.image,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are WIMPY, built by Wimpy Cooperations. Generate a single image from the user prompt and return it as a direct image URL.',
-        },
-        {
-          role: 'user',
-          content: [{ type: 'text', text: prompt }],
-        },
-      ],
-      modalities: ['image'],
+      prompt,
       size,
     }),
   });
 
-  const payload = await response.json();
-  const message = payload.choices?.[0]?.message;
-  let imageUrl: string | undefined;
-
-  if (typeof message?.content === 'string') {
-    imageUrl = message.content.trim();
-  } else if (Array.isArray(message?.content)) {
-    for (const item of message.content) {
-      if (item?.type === 'image_url' && item?.image_url?.url) {
-        imageUrl = item.image_url.url;
-        break;
-      }
-      if (item?.type === 'text' && typeof item.text === 'string' && item.text.includes('http')) {
-        const match = item.text.match(/https?:\/\/[^\s]+/);
-        if (match) {
-          imageUrl = match[0];
-          break;
-        }
-      }
-    }
+  const payload = await response.json().catch(() => ({} as any));
+  if (!response.ok) {
+    return null;
   }
 
-  if (!imageUrl && Array.isArray(payload.data) && payload.data[0]?.url) {
-    imageUrl = payload.data[0].url;
+  let imageUrl: string | undefined;
+  if (typeof payload.url === 'string') {
+    imageUrl = payload.url;
+  } else if (typeof payload.image_base64 === 'string') {
+    imageUrl = `data:image/png;base64,${payload.image_base64}`;
+  } else if (Array.isArray(payload.data) && payload.data.length > 0) {
+    const first = payload.data[0];
+    if (typeof first.url === 'string') {
+      imageUrl = first.url;
+    } else if (typeof first.b64_json === 'string') {
+      imageUrl = `data:image/png;base64,${first.b64_json}`;
+    } else if (typeof first.image_base64 === 'string') {
+      imageUrl = `data:image/png;base64,${first.image_base64}`;
+    }
   }
 
   return imageUrl ? { imageUrl } : null;

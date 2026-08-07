@@ -36,81 +36,37 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'OpenRouter is not configured yet.' }, { status: 500 });
     }
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const response = await fetch('https://openrouter.ai/api/v1/images', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'HTTP-Referer': 'https://wimpyai.example',
-        'X-Title': 'WimpyAI',
       },
       body: JSON.stringify({
         model: modelRegistry.image,
-        tool_choice: 'auto',
-        tools: [
-          {
-            name: 'generate_image',
-            type: 'function',
-            function: {
-              name: 'generate_image',
-              description: 'Generate an image from a text prompt and return it as a direct image URL.',
-              parameters: {
-                type: 'object',
-                properties: {
-                  prompt: {
-                    type: 'string',
-                    description: 'The text prompt to generate an image from.',
-                  },
-                  size: {
-                    type: 'string',
-                    enum: ['256x256', '512x512', '1024x1024'],
-                    description: 'The requested image size.',
-                  },
-                },
-                required: ['prompt'],
-              },
-            },
-          },
-        ],
-        messages: [
-          {
-            role: 'system',
-            content: 'You are WIMPY, built by Wimpy Cooperations. Generate a single image from the user prompt using the generate_image tool and return a direct image URL.',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        modalities: ['image'],
-        size: '1024x1024',
+        prompt,
       }),
     });
 
-    const payload = await response.json();
-    const message = payload.choices?.[0]?.message;
-    let imageUrl = '';
-
-    if (typeof message?.content === 'string') {
-      imageUrl = message.content.trim();
-    } else if (Array.isArray(message?.content)) {
-      for (const item of message.content) {
-        if (item?.type === 'image_url' && item?.image_url?.url) {
-          imageUrl = item.image_url.url;
-          break;
-        }
-        if (item?.type === 'text' && typeof item.text === 'string' && item.text.includes('http')) {
-          const match = item.text.match(/https?:\/\/[^\s]+/);
-          if (match) {
-            imageUrl = match[0];
-            break;
-          }
-        }
-      }
+    const payload = await response.json().catch(() => ({} as any));
+    if (!response.ok) {
+      return Response.json({ error: 'Image generation failed.', detail: payload }, { status: 500 });
     }
 
-    if (!imageUrl && Array.isArray(payload.data) && payload.data[0]?.url) {
-      imageUrl = payload.data[0].url;
+    let imageUrl = '';
+    if (typeof payload.url === 'string') {
+      imageUrl = payload.url;
+    } else if (typeof payload.image_base64 === 'string') {
+      imageUrl = `data:image/png;base64,${payload.image_base64}`;
+    } else if (Array.isArray(payload.data) && payload.data.length > 0) {
+      const first = payload.data[0];
+      if (typeof first.url === 'string') {
+        imageUrl = first.url;
+      } else if (typeof first.b64_json === 'string') {
+        imageUrl = `data:image/png;base64,${first.b64_json}`;
+      } else if (typeof first.image_base64 === 'string') {
+        imageUrl = `data:image/png;base64,${first.image_base64}`;
+      }
     }
 
     const usageTokens = payload.usage?.total_tokens;

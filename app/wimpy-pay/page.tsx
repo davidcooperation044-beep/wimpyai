@@ -7,6 +7,46 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useWalletFundingReturn } from '@/hooks/use-wallet-funding-return';
 
+function syncProfileToPro() {
+  if (typeof window === 'undefined') return;
+
+  const stored = window.localStorage.getItem('wimpyai-profile-v1');
+  let currentProfile: {
+    isConnected: boolean;
+    userId: string | null;
+    displayName: string;
+    avatarInitials: string;
+    plan: 'Free' | 'Pro';
+    subscriptionStatus: 'active' | 'inactive';
+    lastLogin: string | null;
+  } = {
+    isConnected: true,
+    userId: null,
+    displayName: 'Guest',
+    avatarInitials: 'G',
+    plan: 'Free',
+    subscriptionStatus: 'inactive',
+    lastLogin: null,
+  };
+
+  if (stored) {
+    try {
+      currentProfile = JSON.parse(stored);
+    } catch {
+      // ignore invalid storage state
+    }
+  }
+
+  const updatedProfile = {
+    ...currentProfile,
+    plan: 'Pro',
+    subscriptionStatus: 'active',
+  };
+
+  window.localStorage.setItem('wimpyai-profile-v1', JSON.stringify(updatedProfile));
+  window.dispatchEvent(new Event('wimpy-profile-sync'));
+}
+
 export default function WimpyPayCompletePage() {
   const [message, setMessage] = useState('Verifying your subscription...');
   const [isResuming, setIsResuming] = useState(false);
@@ -80,6 +120,21 @@ export default function WimpyPayCompletePage() {
         const data = await response.json();
 
         if (response.ok && data.plan === 'Pro') {
+          const updatedProfile = {
+            ...loadJson('wimpyai-profile-v1', {
+              isConnected: true,
+              userId: null,
+              displayName: 'Guest',
+              avatarInitials: 'G',
+              plan: 'Free',
+              subscriptionStatus: 'inactive',
+              lastLogin: null,
+            }),
+            plan: 'Pro',
+            subscriptionStatus: 'active',
+          };
+          window.localStorage.setItem('wimpyai-profile-v1', JSON.stringify(updatedProfile));
+          window.dispatchEvent(new Event('wimpy-profile-sync'));
           setMessage('Your WimpyAI Pro subscription is now active! Redirecting you back to the app...');
           window.setTimeout(() => router.replace('/'), 1500);
           return;
@@ -130,6 +185,7 @@ export default function WimpyPayCompletePage() {
         const data = await response.json();
 
         if (response.ok && data.plan === 'Pro') {
+          syncProfileToPro();
           setMessage('Your WimpyAI Pro subscription is now active! Redirecting you back to the app...');
           window.setTimeout(() => router.replace('/'), 1500);
           return;
