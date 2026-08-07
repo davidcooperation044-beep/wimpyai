@@ -601,7 +601,42 @@ export default function HomePage() {
       });
 
       if (!response.ok) {
-        throw new Error('Unable to reach the chat API.');
+        // Try to surface server-provided error details in the assistant bubble
+        let bodyText = '';
+        try {
+          bodyText = await response.text();
+          const parsed = JSON.parse(bodyText);
+          bodyText = parsed?.error ? (parsed.detail ? `${parsed.error}: ${parsed.detail}` : parsed.error) : bodyText;
+        } catch {
+          // ignore parse error, use raw text
+        }
+
+        setConversations((prev) =>
+          prev.map((conversation) =>
+            conversation.id === activeConversationId
+              ? {
+                  ...conversation,
+                  messages: conversation.messages.map((message) =>
+                    message.id === assistantMessage.id ? { ...message, content: bodyText || 'Unable to reach the chat API.' } : message
+                  ),
+                }
+              : conversation
+          )
+        );
+
+        if (profile.isConnected && profile.userId) {
+          try {
+            await persistConversationToSupabase(
+              conversations.find((conversation) => conversation.id === activeConversationId) ?? conversationToPersist,
+              profile.userId
+            );
+            await updateMessageContentInSupabase(assistantMessage.id, bodyText || 'Unable to reach the chat API.');
+          } catch (e) {
+            console.error('Failed to persist error state', e);
+          }
+        }
+
+        return;
       }
 
       if (!response.body) {
