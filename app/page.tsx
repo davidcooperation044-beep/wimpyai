@@ -681,7 +681,7 @@ export default function HomePage() {
             </div>
           </aside>
           <div className="flex min-h-0 flex-1 flex-col px-0 pb-0 pt-4 md:px-8 lg:px-10">
-            <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 sm:px-6">
+            <div className="mx-auto flex w-full flex-1 flex-col gap-4 px-4 sm:px-6">
               <div className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
                 <div>
                   <p className="text-sm font-semibold">{mode} mode</p>
@@ -693,11 +693,11 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div className="relative mx-auto w-full max-w-3xl flex h-[min(72vh,calc(100vh-12rem))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-black/5">
+              <div className="relative flex flex-1 flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-black/5">
                 <div
                   ref={chatContainerRef}
                   className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 md:px-0"
-                  style={{ paddingBottom: '220px' }}
+                  style={{ paddingBottom: `${keyboardOffset + 160}px` }}
                 >
                   <div className="mx-auto flex max-w-2xl flex-col gap-4">
                     {isBusy && pendingAssistantMessage?.role === 'assistant' && !pendingAssistantMessage.content.trim() ? (
