@@ -1,15 +1,17 @@
 import { NextRequest } from 'next/server';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { getQuotaState } from '@/lib/quota';
-import { modelRegistry } from '@/lib/models';
+import { getQuotaState, getQuotaWindowStart } from '@/lib/quota';
 import { getUserFromBearerToken } from '@/lib/supabase-server';
+import { getUserQuotaUsage, incrementUserQuotaUsage, getUserPlanIsPro } from '@/lib/quota-db';
+import { modelRegistry } from '@/lib/models';
 
 export async function POST(req: NextRequest) {
   const user = await getUserFromBearerToken(req.headers.get('authorization'));
   const userId = user?.id ?? 'guest';
 
   const requestId = crypto.randomUUID();
-  const rateLimitKey = `chat:${userId}`;
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || req.headers.get('x-real-ip') || 'unknown';
+  const rateLimitKey = userId === 'guest' ? `chat:guest:${ip}` : `chat:${userId}`;
   const rateLimit = checkRateLimit(rateLimitKey);
 
   if (!rateLimit.allowed) {
@@ -18,7 +20,19 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const { prompt, persona = 'Serious', attachments = [], history = [] } = body;
-  const quota = getQuotaState(0, false);
+
+  const isPro = user ? await getUserPlanIsPro(user) : false;
+  const windowStartMs = getQuotaWindowStart();
+  const tokensUsed = user ? await getUserQuotaUsage(user.id) : 0;
+  const quota = getQuotaState(tokensUsed, isPro, windowStartMs);
+
+  if (!user && process.env.REQUIRE_AUTH_FOR_CHAT === 'true') {
+    return Response.json({ error: 'Authentication required' }, { status: 401 });
+  }
+
+  if (quota.remaining <= 0) {
+    return Response.json({ error: 'quota-exceeded', resetsAt: quota.resetsAt }, { status: 429 });
+  }
 
   // Sanitize/clip incoming history so we don't blow up token usage and so we
   // only ever forward well-formed {role, content} entries to OpenRouter.
@@ -145,12 +159,13 @@ export async function POST(req: NextRequest) {
 
       const decoder = new TextDecoder();
       let buffer = '';
-      // OpenRouter/OpenAI stream tool calls as an ARRAY under delta.tool_calls,
-      // keyed by index, split across many chunks. Accumulate per-index.
       const toolCalls: Record<number, { name: string | null; arguments: string }> = {};
       let assistantText = '';
+      let finalUsage: number | null = null;
 
       try {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ requestId, quota, event: 'quota' })}\n\n`));
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -168,7 +183,10 @@ export async function POST(req: NextRequest) {
               const parsed = JSON.parse(payload);
               const delta = parsed.choices?.[0]?.delta?.content || '';
 
-              // Streaming tool calls: delta.tool_calls is an array of partials.
+              if (parsed.usage?.total_tokens != null) {
+                finalUsage = parsed.usage.total_tokens;
+              }
+
               const deltaToolCalls = parsed.choices?.[0]?.delta?.tool_calls;
               if (Array.isArray(deltaToolCalls)) {
                 for (const tc of deltaToolCalls) {
@@ -179,8 +197,6 @@ export async function POST(req: NextRequest) {
                 }
               }
 
-              // Non-streaming fallback: some providers put the full tool call
-              // directly on the final message object instead of deltas.
               const messageToolCalls = parsed.choices?.[0]?.message?.tool_calls;
               if (Array.isArray(messageToolCalls)) {
                 messageToolCalls.forEach((tc: any, idx: number) => {
@@ -192,7 +208,7 @@ export async function POST(req: NextRequest) {
 
               if (delta) {
                 assistantText += delta;
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta, requestId })}\n\n`));
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta, requestId, quota })}\n\n`));
               }
             } catch {
               // ignore malformed frame
@@ -207,15 +223,19 @@ export async function POST(req: NextRequest) {
             const imageResponse = await generateImage(functionArgs.prompt, functionArgs.size || '1024x1024');
             if (imageResponse?.imageUrl) {
               if (!assistantText.trim()) {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: 'Here is your image:', requestId })}\n\n`));
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: 'Here is your image:', requestId, quota })}\n\n`));
               }
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ imageUrl: imageResponse.imageUrl, requestId })}\n\n`));
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ imageUrl: imageResponse.imageUrl, requestId, quota })}\n\n`));
             } else {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: '\n\n(Image generation returned no image — please try again.)', requestId })}\n\n`));
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: '\n\n(Image generation returned no image — please try again.)', requestId, quota })}\n\n`));
             }
           } catch (err) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: '\n\n(Image generation failed.)', requestId })}\n\n`));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: '\n\n(Image generation failed.)', requestId, quota })}\n\n`));
           }
+        }
+
+        if (user && finalUsage !== null) {
+          await incrementUserQuotaUsage(user.id, finalUsage);
         }
 
         controller.close();

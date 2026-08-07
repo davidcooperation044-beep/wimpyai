@@ -5,9 +5,9 @@ export function getQuotaWindowStart(now = Date.now()) {
   return now - (now % FREE_TIER_WINDOW_MS);
 }
 
-export function getQuotaState(tokensUsed: number, isPro = false) {
+export function getQuotaState(tokensUsed: number, isPro = false, windowStartMs: number = getQuotaWindowStart()) {
   const limit = isPro ? FREE_TIER_TOKENS * 5 : FREE_TIER_TOKENS;
   const remaining = Math.max(limit - tokensUsed, 0);
-  const resetsAt = new Date(Date.now() + FREE_TIER_WINDOW_MS).toISOString();
+  const resetsAt = new Date(windowStartMs + FREE_TIER_WINDOW_MS).toISOString();
   return { limit, remaining, resetsAt };
 }

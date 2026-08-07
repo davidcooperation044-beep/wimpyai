@@ -1,15 +1,31 @@
 import { NextRequest } from 'next/server';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { modelRegistry } from '@/lib/models';
+import { getQuotaState, getQuotaWindowStart } from '@/lib/quota';
 import { getUserFromBearerToken } from '@/lib/supabase-server';
+import { getUserQuotaUsage, getUserPlanIsPro, incrementUserQuotaUsage } from '@/lib/quota-db';
+import { modelRegistry } from '@/lib/models';
 
 export async function POST(req: NextRequest) {
   const user = await getUserFromBearerToken(req.headers.get('authorization'));
   const userId = user?.id ?? 'guest';
-
-  const rateLimit = checkRateLimit(`image-generate:${userId}`);
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || req.headers.get('x-real-ip') || 'unknown';
+  const rateLimitKey = userId === 'guest' ? `image-generate:guest:${ip}` : `image-generate:${userId}`;
+  const rateLimit = checkRateLimit(rateLimitKey);
   if (!rateLimit.allowed) {
-    return Response.json({ error: 'Rate limit exceeded' }, { status: 429 });
+    return Response.json({ error: 'Rate limit exceeded', retryAfterMs: rateLimit.retryAfterMs }, { status: 429 });
+  }
+
+  const isPro = user ? await getUserPlanIsPro(user) : false;
+  const windowStartMs = getQuotaWindowStart();
+  const tokensUsed = user ? await getUserQuotaUsage(user.id) : 0;
+  const quota = getQuotaState(tokensUsed, isPro, windowStartMs);
+
+  if (!user && process.env.REQUIRE_AUTH_FOR_IMAGE === 'true') {
+    return Response.json({ error: 'Authentication required' }, { status: 401 });
+  }
+
+  if (quota.remaining <= 0) {
+    return Response.json({ error: 'quota-exceeded', resetsAt: quota.resetsAt }, { status: 429 });
   }
 
   try {
@@ -97,11 +113,16 @@ export async function POST(req: NextRequest) {
       imageUrl = payload.data[0].url;
     }
 
+    const usageTokens = payload.usage?.total_tokens;
+    if (user && typeof usageTokens === 'number') {
+      await incrementUserQuotaUsage(user.id, usageTokens);
+    }
+
     if (!imageUrl) {
       return Response.json({ error: 'Image generation failed.' }, { status: 500 });
     }
 
-    return Response.json({ imageUrl, alt: `Generated image for: ${prompt}` });
+    return Response.json({ imageUrl, alt: `Generated image for: ${prompt}`, quota });
   } catch {
     return Response.json({ error: 'Image generation failed.' }, { status: 500 });
   }

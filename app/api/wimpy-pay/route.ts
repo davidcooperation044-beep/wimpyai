@@ -1,6 +1,10 @@
 import { NextRequest } from 'next/server';
 import { supabaseServer, getUserFromBearerToken } from '@/lib/supabase-server';
 
+function buildReference(userId: string) {
+  return `wimpyai-${userId}-${Date.now()}`;
+}
+
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
   const user = await getUserFromBearerToken(authHeader);
@@ -8,32 +12,58 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { data: subscriptions, error: subscriptionError } = await supabaseServer
-    .from('subscriptions')
-    .select('id, status, plan, product_name, current_period_end')
-    .eq('user_id', user.id)
-    .eq('product_name', 'wimpyai')
-    .in('status', ['active', 'trialing'])
-    .order('created_at', { ascending: false })
-    .limit(1);
+  const body = await req.json().catch(() => ({} as any));
+  const planName = body.plan ?? body.plan_name ?? 'Pro';
+  const reference = body.reference ?? buildReference(user.id);
 
-  if (subscriptionError) {
-    return Response.json({ error: 'Unable to query subscription status.' }, { status: 500 });
+  const wimpyPayUrl = process.env.WIMPYPAY_API_URL;
+  const internalApiKey = process.env.WIMPYPAY_INTERNAL_API_KEY;
+  if (!wimpyPayUrl || !internalApiKey) {
+    return Response.json({ error: 'WimpyPay is not configured' }, { status: 500 });
   }
 
-  const subscription = Array.isArray(subscriptions) ? subscriptions[0] : null;
-  if (!subscription || subscription.plan !== 'Pro' || subscription.status !== 'active') {
-    return Response.json({ error: 'No active Pro subscription found.' }, { status: 402 });
-  }
-
-  const existingAppMetadata = typeof user.app_metadata === 'object' && user.app_metadata !== null ? user.app_metadata : {};
-  const { error: updateError } = await supabaseServer.auth.admin.updateUserById(user.id, {
-    app_metadata: { ...existingAppMetadata, plan: 'Pro' },
+  const upstream = await fetch(`${wimpyPayUrl}/api/external/subscribe`, {
+    method: 'POST',
+    headers: {
+      'x-internal-api-key': internalApiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      user_id: user.id,
+      product_name: 'wimpyai',
+      plan_name: planName,
+      reference,
+    }),
   });
 
-  if (updateError) {
-    return Response.json({ error: 'Unable to update user plan.' }, { status: 500 });
+  const data = await upstream.json().catch(() => ({}));
+
+  if (!upstream.ok) {
+    if (data.error === 'insufficient-funds') {
+      return Response.json(
+        { error: 'insufficient-funds', requiredAmount: data.requiredAmount, currentBalance: data.currentBalance },
+        { status: 402 }
+      );
+    }
+    return Response.json(data, { status: upstream.status });
   }
 
-  return Response.json({ plan: 'Pro', subscription });
+  await supabaseServer.from('subscriptions').upsert(
+    {
+      user_id: user.id,
+      product_name: 'wimpyai',
+      plan: planName,
+      status: 'active',
+      current_period_end: data.current_period_end ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id,product_name' }
+  );
+
+  const existingAppMetadata = typeof user.app_metadata === 'object' && user.app_metadata !== null ? user.app_metadata : {};
+  await supabaseServer.auth.admin.updateUserById(user.id, {
+    app_metadata: { ...existingAppMetadata, plan: planName },
+  });
+
+  return Response.json({ success: true, plan: planName, subscription: data });
 }

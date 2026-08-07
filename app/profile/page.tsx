@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { buildWimpyIDLoginUrl, buildWimpyPayUrl } from '@/lib/auth';
+import { buildWimpyIDLoginUrl } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import { Download, ShieldCheck, Sparkles, UserCircle2 } from 'lucide-react';
+import { UpgradeModal } from '@/app/components/upgrade-modal';
 
 type ProfileState = {
   isConnected: boolean;
@@ -57,6 +58,7 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<ProfileState>(() => loadJson<ProfileState>('wimpyai-profile-v1', emptyProfile));
   const [settings, setSettings] = useState<SettingsState>(() => loadJson<SettingsState>('wimpyai-settings-v1', emptySettings));
   const [toast, setToast] = useState<string | null>(null);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -116,10 +118,12 @@ export default function ProfilePage() {
       handleWimpyIDLogin('login');
       return;
     }
-    if (typeof window === 'undefined') return;
-    const url = buildWimpyPayUrl(window.location.origin, profile.plan === 'Free' ? 'Pro' : 'Free');
-    window.open(url, '_blank', 'noopener,noreferrer');
-    showToast(profile.plan === 'Free' ? 'Opening Pro upgrade flow…' : 'Opening subscription management…');
+    setShowUpgradeModal(true);
+  };
+
+  const handleSubscriptionSuccess = () => {
+    setProfile((prev) => ({ ...prev, plan: 'Pro', subscriptionStatus: 'active' }));
+    showToast('WimpyAI Pro is now active!');
   };
 
   const router = useRouter();
@@ -238,6 +242,13 @@ export default function ProfilePage() {
             </div>
           </div>
         </section>
+
+        <UpgradeModal
+          open={showUpgradeModal}
+          onClose={() => setShowUpgradeModal(false)}
+          onSubscribed={handleSubscriptionSuccess}
+          currentPlan={profile.plan}
+        />
 
         <section className="grid gap-6 lg:grid-cols-[1.1fr,0.9fr]">
           <div className="rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-sm">

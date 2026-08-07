@@ -135,3 +135,70 @@ select
 from public.wai_conversations c
 left join public.wai_messages m on m.conversation_id = c.id
 group by c.id, c.user_id, c.title, c.created_at, c.updated_at;
+
+-- Subscription and quota usage tables for WimpyPay and token limits.
+create table if not exists public.subscriptions (
+  user_id uuid primary key,
+  product_name text not null default 'wimpyai',
+  plan text not null,
+  status text not null default 'active',
+  current_period_end timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_subscriptions_user_id on public.subscriptions(user_id);
+
+alter table public.subscriptions enable row level security;
+
+create policy "Subscriptions are visible to owner" on public.subscriptions
+  for select using (auth.uid() = user_id);
+
+create policy "Subscriptions are insertable by owner" on public.subscriptions
+  for insert with check (auth.uid() = user_id);
+
+create policy "Subscriptions are updatable by owner" on public.subscriptions
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "Subscriptions are deletable by owner" on public.subscriptions
+  for delete using (auth.uid() = user_id);
+
+create table if not exists public.quota_usage (
+  user_id uuid not null,
+  window_start timestamptz not null,
+  tokens_used int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, window_start)
+);
+
+create index if not exists idx_quota_usage_user_window on public.quota_usage(user_id, window_start desc);
+
+alter table public.quota_usage enable row level security;
+
+create policy "Quota usage is visible to owner" on public.quota_usage
+  for select using (auth.uid() = user_id);
+
+create policy "Quota usage is insertable by owner" on public.quota_usage
+  for insert with check (auth.uid() = user_id);
+
+create policy "Quota usage is updatable by owner" on public.quota_usage
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "Quota usage is deletable by owner" on public.quota_usage
+  for delete using (auth.uid() = user_id);
+
+create or replace function public.increment_quota_usage(
+  p_user_id uuid,
+  p_window_start timestamptz,
+  p_tokens int
+)
+returns void language plpgsql as $$
+begin
+  insert into public.quota_usage(user_id, window_start, tokens_used, created_at, updated_at)
+  values (p_user_id, p_window_start, p_tokens, now(), now())
+  on conflict (user_id, window_start) do update
+  set tokens_used = public.quota_usage.tokens_used + excluded.tokens_used,
+      updated_at = now();
+end;
+$$;

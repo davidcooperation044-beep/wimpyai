@@ -12,8 +12,9 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy, Sparkles, Plus, Moon, SunMedium, SendHorizontal, ShieldCheck, UserCircle2, Mic2 } from 'lucide-react';
 import 'katex/dist/katex.min.css';
-import { buildWimpyIDLoginUrl, buildWimpyPayUrl, bootstrapWimpyIDSession } from '@/lib/auth';
+import { buildWimpyIDLoginUrl, bootstrapWimpyIDSession } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
+import { UpgradeModal } from '@/app/components/upgrade-modal';
 
 type MessageRole = 'assistant' | 'user' | 'system';
 
@@ -215,6 +216,9 @@ export default function HomePage() {
   const [actionSheetMessageId, setActionSheetMessageId] = useState<string | null>(null);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -789,14 +793,25 @@ export default function HomePage() {
 
   const router = useRouter();
 
+  const showToast = (message: string) => {
+    setToast(message);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3200);
+  };
+
   const handleSubscriptionToggle = () => {
     if (!profile.isConnected) {
       setShowAuthModal(true);
       return;
     }
-    if (typeof window === 'undefined') return;
-    const url = buildWimpyPayUrl(window.location.origin, profile.plan === 'Free' ? 'Pro' : 'Free');
-    window.open(url, '_blank', 'noopener,noreferrer');
+    setShowUpgradeModal(true);
+  };
+
+  const handleSubscriptionSuccess = () => {
+    setProfile((prev) => ({ ...prev, plan: 'Pro', subscriptionStatus: 'active' }));
+    showToast('WimpyAI Pro is now active!');
   };
 
   const handleExportData = () => {
@@ -1306,6 +1321,13 @@ export default function HomePage() {
             </div>
           </div>
         ) : null}
+
+        <UpgradeModal
+          open={showUpgradeModal}
+          onClose={() => setShowUpgradeModal(false)}
+          onSubscribed={handleSubscriptionSuccess}
+          currentPlan={profile.plan}
+        />
 
         {showAttachmentSheet ? (
           <div className="fixed inset-0 z-50 flex items-end bg-black/40 px-4 pb-4" onClick={closeAttachmentSheet}>
