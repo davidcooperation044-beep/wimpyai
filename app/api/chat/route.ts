@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
         },
         {
           role: 'system',
-          content: `Formatting rule for math: whenever your answer includes a mathematical expression, equation, or calculation, format it as LaTeX. Use $...$ for inline math and $$...$$ on its own line for standalone/display equations and multi-step derivations (one step per line inside the $$ block where helpful). Never write math as plain unformatted text.`,
+          content: `Formatting rule for math: every mathematical expression, equation, variable, or calculation — including every intermediate step in a multi-step derivation, not just the final result — must be wrapped in $...$ for inline math or $$...$$ on its own line for standalone/display math. Do NOT use square-bracket math delimiters like [ ... ] or \\( ... \\) / \\[ ... \\] anywhere — only $ and $$ are recognized by the renderer. A LaTeX command (\times, \text{}, \frac{}{}, \quad, etc.) must never appear outside a $...$ or $$...$$ region.`,
         },
         ...sanitizedHistory,
         userMessage,
@@ -220,7 +220,7 @@ export async function POST(req: NextRequest) {
         if (imageCall) {
           try {
             const functionArgs = JSON.parse(imageCall.arguments || '{}');
-            const imageResponse = await generateImage(functionArgs.prompt, functionArgs.size);
+            const imageResponse = await generateImage(functionArgs.prompt);
 
             if (imageResponse?.imageUrl) {
               controller.enqueue(
@@ -268,7 +268,7 @@ export async function POST(req: NextRequest) {
   });
 }
 
-async function generateImage(prompt: string, size: string = '1024x1024') {
+async function generateImage(prompt: string) {
   const response = await fetch('https://openrouter.ai/api/v1/images', {
     method: 'POST',
     headers: {
@@ -278,12 +278,12 @@ async function generateImage(prompt: string, size: string = '1024x1024') {
     body: JSON.stringify({
       model: modelRegistry.image,
       prompt,
-      size,
     }),
   });
 
   const payload = await response.json().catch(() => ({} as any));
   if (!response.ok) {
+    console.error('[generateImage] failed', response.status, payload);
     return null;
   }
 

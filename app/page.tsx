@@ -101,6 +101,12 @@ function loadJson<T>(key: string, fallback: T): T {
   }
 }
 
+function normalizeLatexDelimiters(content: string): string {
+  return content
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, expr) => `$$${expr}$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, expr) => `$${expr}$`);
+}
+
 function getConversationStorageKey(userId: string | null): string {
   return userId ? `wimpyai-conversations-v1:${userId}` : 'wimpyai-conversations-v1:guest';
 }
@@ -1108,7 +1114,7 @@ export default function HomePage() {
                                     },
                                   }}
                                 >
-                                  {message.content}
+                                  {normalizeLatexDelimiters(message.content)}
                                 </ReactMarkdown>
                               </div>
                             ) : (

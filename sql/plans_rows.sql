@@ -1,0 +1,1 @@
+INSERT INTO "public"."plans" ("id", "product_name", "name", "price", "billing_interval", "created_at") VALUES ('cca58bd0-92d3-47e4-88dc-9a5ae05e7690', 'wimpyai', 'Pro', '17000', 'monthly', '2026-08-06 10:39:23.692194+00');
