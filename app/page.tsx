@@ -606,7 +606,7 @@ export default function HomePage() {
 
   return (
     <main className={settings.darkMode ? 'dark' : ''}>
-      <div className="flex h-dvh flex-col overflow-hidden bg-[var(--bg)] text-[var(--ink)] transition-colors">
+      <div className="flex min-h-[100dvh] flex-col overflow-hidden bg-[var(--bg)] text-[var(--ink)] transition-colors">
         <div className="sticky top-0 z-20 shrink-0 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-sm">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 md:px-8">
             <button
@@ -779,81 +779,80 @@ export default function HomePage() {
                     })}
                   </div>
                 </div>
-
-                <div className="sticky bottom-0 z-10 mt-4 rounded-t-3xl border border-[var(--border)] border-b-0 bg-[var(--panel)] p-4 shadow-[0_-12px_30px_-20px_rgba(0,0,0,0.18)]" style={{ marginBottom: `env(safe-area-inset-bottom)` }}>
-                  {offline ? (
-                    <div className="mb-3 rounded-2xl border border-red-300 bg-red-100 px-3 py-2 text-sm text-red-700">
-                      You are offline. Messages will send when connection returns.
-                    </div>
-                  ) : null}
-                  {attachments.length ? (
-                    <div className="mb-3 space-y-2">
-                      {attachments.map((attachment, index) => (
-                        <div key={`${attachment.name}-${index}`} className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm">
-                          <span className="truncate">{attachment.name}</span>
-                          <button
-                            className="text-[var(--muted)]"
-                            onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== index))}
-                            type="button"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
-                      onClick={handleAttachmentButton}
-                      aria-label="Attach media"
-                    >
-                      <Plus size={20} />
-                    </button>
-                    <button
-                      type="button"
-                      className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
-                      onClick={() => {
-                        if ('vibrate' in navigator) navigator.vibrate(10);
-                        setIsRecording((prev) => !prev);
-                      }}
-                      aria-label="Toggle voice input"
-                    >
-                      <Mic2 size={20} />
-                    </button>
-                    <textarea
-                      ref={inputRef}
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      onFocus={() => setIsInputFocused(true)}
-                      onBlur={() => setIsInputFocused(false)}
-                      rows={1}
-                      className="min-h-[44px] flex-1 resize-none rounded-3xl border border-[var(--border)] bg-transparent px-4 py-3 text-base leading-6 outline-none focus:border-[var(--accent)]"
-                      placeholder={isBusy ? 'WIMPY is responding…' : 'Ask WimpyAI anything…'}
-                      disabled={isBusy}
-                      style={{ fontSize: '16px' }}
-                      aria-label="Message input"
-                    />
-                    <button
-                      className="flex h-12 min-w-[52px] items-center justify-center rounded-3xl bg-[var(--accent)] text-white shadow-sm"
-                      onClick={() => void sendMessage()}
-                      disabled={isBusy || (!draft.trim() && !attachments.length)}
-                      aria-label="Send message"
-                    >
-                      {isBusy ? (
-                        <span className="flex items-center gap-1">
-                          <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.2s]" />
-                          <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.1s]" />
-                          <span className="h-2 w-2 animate-bounce rounded-full bg-white" />
-                        </span>
-                      ) : (
-                        <SendHorizontal size={20} />
-                      )}
-                    </button>
-                  </div>
+              </div>
+            </div>
+            <div className="sticky bottom-0 z-10 mt-4 rounded-t-3xl border border-[var(--border)] border-b-0 bg-[var(--panel)] p-4 shadow-[0_-12px_30px_-20px_rgba(0,0,0,0.18)]" style={{ marginBottom: `env(safe-area-inset-bottom)` }}>
+              {offline ? (
+                <div className="mb-3 rounded-2xl border border-red-300 bg-red-100 px-3 py-2 text-sm text-red-700">
+                  You are offline. Messages will send when connection returns.
                 </div>
+              ) : null}
+              {attachments.length ? (
+                <div className="mb-3 space-y-2">
+                  {attachments.map((attachment, index) => (
+                    <div key={`${attachment.name}-${index}`} className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm">
+                      <span className="truncate">{attachment.name}</span>
+                      <button
+                        className="text-[var(--muted)]"
+                        onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== index))}
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
+                  onClick={handleAttachmentButton}
+                  aria-label="Attach media"
+                >
+                  <Plus size={20} />
+                </button>
+                <button
+                  type="button"
+                  className="flex h-12 min-w-[44px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--ink)] shadow-sm"
+                  onClick={() => {
+                    if ('vibrate' in navigator) navigator.vibrate(10);
+                    setIsRecording((prev) => !prev);
+                  }}
+                  aria-label="Toggle voice input"
+                >
+                  <Mic2 size={20} />
+                </button>
+                <textarea
+                  ref={inputRef}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onFocus={() => setIsInputFocused(true)}
+                  onBlur={() => setIsInputFocused(false)}
+                  rows={1}
+                  className="min-h-[44px] flex-1 resize-none rounded-3xl border border-[var(--border)] bg-transparent px-4 py-3 text-base leading-6 outline-none focus:border-[var(--accent)]"
+                  placeholder={isBusy ? 'WIMPY is responding…' : 'Ask WimpyAI anything…'}
+                  disabled={isBusy}
+                  style={{ fontSize: '16px' }}
+                  aria-label="Message input"
+                />
+                <button
+                  className="flex h-12 min-w-[52px] items-center justify-center rounded-3xl bg-[var(--accent)] text-white shadow-sm"
+                  onClick={() => void sendMessage()}
+                  disabled={isBusy || (!draft.trim() && !attachments.length)}
+                  aria-label="Send message"
+                >
+                  {isBusy ? (
+                    <span className="flex items-center gap-1">
+                      <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.2s]" />
+                      <span className="h-2 w-2 animate-bounce rounded-full bg-white [animation-delay:-0.1s]" />
+                      <span className="h-2 w-2 animate-bounce rounded-full bg-white" />
+                    </span>
+                  ) : (
+                    <SendHorizontal size={20} />
+                  )}
+                </button>
               </div>
             </div>
           </div>

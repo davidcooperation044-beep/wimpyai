@@ -10,7 +10,7 @@ export function buildWimpyIDLoginUrl(appUrl: string, mode: 'login' | 'signup' = 
 export function buildWimpyPayUrl(appUrl: string, plan: WimpyPlan = 'Pro') {
   const redirectUrl = new URL('/wimpy-pay', appUrl);
   redirectUrl.searchParams.set('plan', plan);
-  return `https://pay.wimpy-corp.com.ng/checkout?redirect=${encodeURIComponent(redirectUrl.toString())}&plan=${plan}`;
+  return `https://pay.wimpy-corp.com.ng/plans?redirect=${encodeURIComponent(redirectUrl.toString())}&plan=${plan}`;
 }
 
 export async function bootstrapWimpyIDSession() {
