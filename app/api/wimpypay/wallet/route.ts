@@ -16,10 +16,24 @@ export async function GET(req: NextRequest) {
     headers: { Authorization: req.headers.get('authorization') ?? '' },
   });
 
-  const payload = await upstream.json().catch(() => ({}));
+  const payload = await upstream.json().catch(() => ({} as any));
   if (!upstream.ok) {
     return Response.json(payload, { status: upstream.status });
   }
 
-  return Response.json({ userId: user.id, ...payload });
+  const rawBalance =
+    payload.balance ??
+    payload.currentBalance ??
+    payload.wallet_balance ??
+    payload.wallet?.balance ??
+    payload.data?.balance ??
+    payload.data?.currentBalance ??
+    payload.data?.wallet_balance ??
+    null;
+  const balance = Number(rawBalance);
+
+  return Response.json({
+    userId: user.id,
+    balance: Number.isFinite(balance) ? balance : null,
+  });
 }
