@@ -946,9 +946,17 @@ export default function HomePage() {
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={() => setShowAuthModal(true)}>
                   {profile.isConnected ? 'Account' : 'Sign in'}
                 </button>
-                <Link href="/profile" className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm">
+                <a
+                  href="/profile"
+                  className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm"
+                  onClick={() => {
+                    if (typeof window !== 'undefined') {
+                      window.location.href = '/profile';
+                    }
+                  }}
+                >
                   Profile
-                </Link>
+                </a>
                 <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-3 text-left text-sm" onClick={createConversation}>
                   New chat
                 </button>
