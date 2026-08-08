@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getUserFromBearerToken } from '@/lib/supabase-server';
 import { getUserMemory, rememberForUser, deleteMemoryItem } from '@/lib/memory';
+import { recordUsage } from '@/lib/usage';
 
 export async function GET(req: NextRequest) {
   const user = await getUserFromBearerToken(req.headers.get('authorization'));
@@ -16,6 +17,11 @@ export async function POST(req: NextRequest) {
   const { key, value } = body;
   if (!key || !value) return Response.json({ error: 'Missing key/value' }, { status: 400 });
   const item = await rememberForUser(user.id, String(key), String(value));
+  try {
+    await recordUsage({ userId: user.id, event_type: 'remember', tokens: 1, metadata: { key: String(key) } });
+  } catch (e) {
+    console.warn('[usage] failed to record remember usage', e);
+  }
   return Response.json({ item });
 }
 

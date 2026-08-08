@@ -4,6 +4,7 @@ import { getQuotaState, getQuotaWindowStart } from '@/lib/quota';
 import { getUserFromBearerToken } from '@/lib/supabase-server';
 import { getUserQuotaUsage, getUserPlanIsPro, incrementUserQuotaUsage } from '@/lib/quota-db';
 import { modelRegistry } from '@/lib/models';
+import { recordUsage } from '@/lib/usage';
 
 export async function POST(req: NextRequest) {
   const user = await getUserFromBearerToken(req.headers.get('authorization'));
@@ -72,6 +73,11 @@ export async function POST(req: NextRequest) {
     const usageTokens = payload.usage?.total_tokens;
     if (user && typeof usageTokens === 'number') {
       await incrementUserQuotaUsage(user.id, usageTokens);
+      try {
+        await recordUsage({ userId: user.id, event_type: 'image_generation', tokens: usageTokens, metadata: { promptLength: (prompt || '').length } });
+      } catch (e) {
+        console.warn('[usage] failed to record image generation (image route)', e);
+      }
     }
 
     if (!imageUrl) {
