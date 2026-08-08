@@ -27,6 +27,19 @@ type Message = {
   images?: string[];
 };
 
+type AttachmentKind = 'image' | 'text';
+
+type Attachment = {
+  id: string;
+  name: string;
+  type: string;
+  kind: AttachmentKind;
+  size: number;
+  src?: string;
+  content?: string;
+  truncated?: boolean;
+};
+
 type Conversation = {
   id: string;
   title: string;
@@ -234,7 +247,7 @@ export default function HomePage() {
   const [activeConversationId, setActiveConversationId] = useState(initialConversation.id);
   const [draft, setDraft] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [attachments, setAttachments] = useState<Array<{ name: string; type: string; src: string }>>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSupported, setRecordingSupported] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -574,11 +587,30 @@ export default function HomePage() {
     const effectiveDraft = overrideContent ?? draft;
     if ((!effectiveDraft.trim() && !attachments.length) || isStreaming) return;
     const content = effectiveDraft.trim();
+    const textAttachments = attachments.filter((attachment) => attachment.kind === 'text');
+    const imageAttachments = attachments.filter((attachment) => attachment.kind === 'image');
+
+    const fileBlocks = textAttachments
+      .map((attachment) => {
+        const truncatedNotice = attachment.truncated ? `\n[...truncated file content, original size ${attachment.size} chars]` : '';
+        return `\n\n--- Attached file: ${attachment.name} ---\n\n\`\`\`\n${attachment.content ?? ''}\n\`\`\`\n${truncatedNotice}`;
+      })
+      .join('');
+
+    const promptPrefix = content ||
+      (textAttachments.length > 0
+        ? `Please analyze the attached file${textAttachments.length > 1 ? 's' : ''} below.`
+        : imageAttachments.length > 0
+        ? `Please describe the attached image${imageAttachments.length > 1 ? 's' : ''}.`
+        : '');
+
+    const outgoingContent = `${promptPrefix}${fileBlocks}`.trim();
+
     const userMessage: Message = {
       id: createEntityId('msg'),
       role: 'user',
-      content: content || (attachments.length > 0 ? `Please describe the attached image${attachments.length > 1 ? 's' : ''}.` : ''),
-      images: attachments.map((attachment) => attachment.src),
+      content: outgoingContent,
+      images: imageAttachments.map((attachment) => attachment.src || '').filter(Boolean),
     };
     const assistantMessage: Message = {
       id: createEntityId('msg'),
@@ -660,11 +692,11 @@ export default function HomePage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt: content,
+          prompt: outgoingContent,
           persona: mode,
           history,
-          attachments: attachments.map((attachment) => ({
-            url: attachment.src,
+          attachments: imageAttachments.map((attachment) => ({
+            url: attachment.src as string,
             filename: attachment.name,
             type: attachment.type,
           })),
@@ -854,24 +886,6 @@ export default function HomePage() {
     }
   };
 
-  const handleAttachmentSelect = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files?.length) return;
-
-    const nextAttachments: Array<{ name: string; type: string; src: string }> = [];
-    for (const file of Array.from(files)) {
-      const reader = new FileReader();
-      const src = await new Promise<string>((resolve) => {
-        reader.onloadend = () => {
-          resolve(typeof reader.result === 'string' ? reader.result : '');
-        };
-        reader.readAsDataURL(file);
-      });
-      nextAttachments.push({ name: file.name, type: file.type, src });
-    }
-    setAttachments((prev) => [...prev, ...nextAttachments]);
-  };
-
   const handleWimpyIDLogin = (mode: 'login' | 'signup' = 'login') => {
     if (typeof window === 'undefined') return;
     const url = buildWimpyIDLoginUrl(window.location.origin, mode);
@@ -1027,31 +1041,83 @@ export default function HomePage() {
   const handleAttach = async (event: ChangeEvent<HTMLInputElement>) => {
     if (!event.target.files?.length) return;
 
-    const nextAttachments: Array<{ name: string; type: string; src: string }> = [];
+    const nextAttachments: Attachment[] = [];
+    const textFilePattern = /\.(txt|md|csv|js|jsx|ts|tsx|py|json|html|css|yaml|yml|xml|log)$/i;
+    const MAX_TEXT_ATTACHMENT_CHARS = 20000;
+
     for (const file of Array.from(event.target.files)) {
       const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp|svg|heic|heif)$/i.test(file.name);
-      if (!isImage) {
-        showToast(`Only image attachments are supported. Skipped ${file.name}.`);
+      const isTextFile =
+        file.type.startsWith('text/') ||
+        file.type === 'application/json' ||
+        textFilePattern.test(file.name);
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+
+      if (isTextFile) {
+        let fileText = '';
+        try {
+          fileText = await file.text();
+        } catch (error) {
+          console.error('[handleAttach] failed to read text file', file.name, error);
+          showToast(`Unable to read ${file.name}.`);
+          continue;
+        }
+
+        const truncated = fileText.length > MAX_TEXT_ATTACHMENT_CHARS;
+        const content = truncated
+          ? `${fileText.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[...truncated, file is ${fileText.length} characters]`
+          : fileText;
+
+        if (truncated) {
+          showToast(`Attached ${file.name}, truncated to ${MAX_TEXT_ATTACHMENT_CHARS} characters.`);
+        }
+
+        nextAttachments.push({
+          id: createEntityId('att'),
+          name: file.name,
+          type: file.type || 'text/plain',
+          kind: 'text',
+          size: fileText.length,
+          content,
+          truncated,
+        });
         continue;
       }
 
-      const reader = new FileReader();
-      const src = await new Promise<string>((resolve, reject) => {
-        reader.onloadend = () => {
-          resolve(typeof reader.result === 'string' ? reader.result : '');
-        };
-        reader.onerror = () => {
-          reject(new Error(`Failed to read file ${file.name}`));
-        };
-        reader.readAsDataURL(file);
-      }).catch((error) => {
-        console.error('[handleAttach] failed to read file', error);
-        showToast(`Unable to attach ${file.name}.`);
-        return '';
-      });
+      if (isImage) {
+        const reader = new FileReader();
+        const src = await new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => {
+            resolve(typeof reader.result === 'string' ? reader.result : '');
+          };
+          reader.onerror = () => {
+            reject(new Error(`Failed to read file ${file.name}`));
+          };
+          reader.readAsDataURL(file);
+        }).catch((error) => {
+          console.error('[handleAttach] failed to read image file', file.name, error);
+          showToast(`Unable to attach ${file.name}.`);
+          return '';
+        });
 
-      if (!src) continue;
-      nextAttachments.push({ name: file.name, type: file.type, src });
+        if (!src) continue;
+        nextAttachments.push({
+          id: createEntityId('att'),
+          name: file.name,
+          type: file.type,
+          kind: 'image',
+          size: file.size,
+          src,
+        });
+        continue;
+      }
+
+      if (isPdf) {
+        showToast(`${file.name} is a PDF and not yet supported.`);
+        continue;
+      }
+
+      showToast(`Only image and text/code files are supported. Skipped ${file.name}.`);
     }
 
     if (nextAttachments.length > 0) {
@@ -1319,7 +1385,17 @@ export default function HomePage() {
                     <div className="mb-3 space-y-2">
                       {attachments.map((attachment, index) => (
                         <div key={`${attachment.name}-${index}`} className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-3 py-2 text-sm">
-                          <span className="truncate">{attachment.name}</span>
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="truncate">{attachment.name}</span>
+                            <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] uppercase tracking-wide text-[var(--muted)]">
+                              {attachment.kind === 'image' ? 'Image' : 'Text'}
+                            </span>
+                            {attachment.kind === 'text' && attachment.truncated ? (
+                              <span className="rounded-full bg-yellow-500/10 px-2 py-0.5 text-[11px] uppercase tracking-wide text-yellow-300">
+                                Truncated
+                              </span>
+                            ) : null}
+                          </div>
                           <button
                             className="text-[var(--muted)]"
                             onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== index))}
