@@ -21,6 +21,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'failed_to_delete_messages' }, { status: 500 });
     }
 
+    // Cascade delete any shares associated with this conversation
+    const { error: sharesError } = await supabaseServer
+      .from('wai_shares')
+      .delete()
+      .eq('conversation_id', conversationId)
+      .eq('user_id', user.id);
+
+    if (sharesError) {
+      console.error('[delete] failed to delete shares', sharesError);
+      // continue — do not fail the whole operation for share-delete errors, but log it
+    }
+
     const { error: conversationError } = await supabaseServer
       .from('wai_conversations')
       .delete()

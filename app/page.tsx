@@ -1285,20 +1285,30 @@ export default function HomePage() {
     closeImageEditor();
   };
 
-  const handleDeleteConversation = (conversationId: string) => {
+  const handleDeleteConversation = async (conversationId: string) => {
+    const confirmDelete = typeof window !== 'undefined' ? window.confirm('Delete this conversation and all its messages? This action cannot be undone.') : true;
+    if (!confirmDelete) return;
+
     setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
     if (conversationId === activeConversationId && conversations.length > 1) {
       setActiveConversationId(conversations[0].id);
     }
     if (navigator.vibrate) navigator.vibrate([10, 20, 10]);
+
     if (profile.userId) {
-      fetch('/api/conversations/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversationId }),
-      }).catch((error) => {
+      try {
+        const auth = await getAuthHeaders();
+        const resp = await fetch('/api/conversations/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...auth },
+          body: JSON.stringify({ conversationId }),
+        });
+        if (!resp.ok) {
+          console.error('[handleDeleteConversation] remote delete returned error', await resp.text().catch(() => ''));
+        }
+      } catch (error) {
         console.error('[handleDeleteConversation] failed to delete conversation remotely', error);
-      });
+      }
     }
   };
 
