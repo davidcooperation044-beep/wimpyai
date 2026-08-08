@@ -429,6 +429,10 @@ async function generateImage(prompt: string) {
     }
   }
 
+  if (!imageUrl) {
+    console.error('[generateImage] unexpected payload format', payload);
+  }
+
   return imageUrl ? { imageUrl } : null;
 }
 

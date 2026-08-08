@@ -20,6 +20,10 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'OpenRouter is not configured yet.' }, { status: 500 });
     }
 
+    if (!image || typeof image !== 'string') {
+      return Response.json({ error: 'Invalid image payload.' }, { status: 400 });
+    }
+
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -46,10 +50,16 @@ export async function POST(req: NextRequest) {
       }),
     });
 
-    const payload = await response.json();
-    const analysis = payload.choices?.[0]?.message?.content || 'I could not analyze that image right now.';
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      console.error('[upload-image] OpenRouter request failed', response.status, payload);
+      return Response.json({ error: 'Image analysis failed.', detail: payload?.error || payload }, { status: 500 });
+    }
+
+    const analysis = payload?.choices?.[0]?.message?.content || 'I could not analyze that image right now.';
     return Response.json({ analysis });
-  } catch {
+  } catch (error) {
+    console.error('[upload-image] failed', error);
     return Response.json({ error: 'Image analysis failed.' }, { status: 500 });
   }
 }

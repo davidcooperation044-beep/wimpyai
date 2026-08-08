@@ -92,10 +92,6 @@ const emptySettings: SettingsState = {
   compactMode: false,
 };
 
-function copyText(text: string) {
-  navigator.clipboard.writeText(text);
-}
-
 function loadJson<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
   try {
@@ -892,6 +888,44 @@ export default function HomePage() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3200);
   };
 
+  async function copyText(text: string) {
+    if (!text) {
+      showToast('Nothing to copy.');
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('Copied to clipboard.');
+        return;
+      } catch (error) {
+        console.warn('[copyText] navigator.clipboard failed', error);
+      }
+    }
+
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', 'true');
+      textarea.style.position = 'absolute';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textarea);
+
+      if (successful) {
+        showToast('Copied to clipboard.');
+      } else {
+        throw new Error('execCommand copy failed');
+      }
+    } catch (error) {
+      console.error('[copyText] fallback copy failed', error);
+      showToast('Unable to copy text.');
+    }
+  }
+
   const handleSubscriptionToggle = () => {
     if (!profile.isConnected) {
       setShowAuthModal(true);
@@ -995,16 +1029,34 @@ export default function HomePage() {
 
     const nextAttachments: Array<{ name: string; type: string; src: string }> = [];
     for (const file of Array.from(event.target.files)) {
+      const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp|svg|heic|heif)$/i.test(file.name);
+      if (!isImage) {
+        showToast(`Only image attachments are supported. Skipped ${file.name}.`);
+        continue;
+      }
+
       const reader = new FileReader();
-      const src = await new Promise<string>((resolve) => {
+      const src = await new Promise<string>((resolve, reject) => {
         reader.onloadend = () => {
           resolve(typeof reader.result === 'string' ? reader.result : '');
         };
+        reader.onerror = () => {
+          reject(new Error(`Failed to read file ${file.name}`));
+        };
         reader.readAsDataURL(file);
+      }).catch((error) => {
+        console.error('[handleAttach] failed to read file', error);
+        showToast(`Unable to attach ${file.name}.`);
+        return '';
       });
+
+      if (!src) continue;
       nextAttachments.push({ name: file.name, type: file.type, src });
     }
-    setAttachments((prev) => [...prev, ...nextAttachments]);
+
+    if (nextAttachments.length > 0) {
+      setAttachments((prev) => [...prev, ...nextAttachments]);
+    }
     closeAttachmentSheet();
   };
 
