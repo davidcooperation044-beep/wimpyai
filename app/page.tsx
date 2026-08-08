@@ -15,6 +15,7 @@ import 'katex/dist/katex.min.css';
 import { buildWimpyIDLoginUrl, bootstrapWimpyIDSession } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import { UpgradeModal } from '@/app/components/upgrade-modal';
+import ConfirmModal from '@/app/components/confirm-modal';
 
 type MessageRole = 'assistant' | 'user' | 'system';
 
@@ -268,6 +269,8 @@ export default function HomePage() {
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
   const [quotaState, setQuotaState] = useState<QuotaState | null>(null);
   const [quotaError, setQuotaError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -1169,6 +1172,8 @@ export default function HomePage() {
     void sendMessage(newText);
   };
 
+  // Modal render for delete confirmation
+
   const handleFeedback = async (messageId: string, vote: 1 | -1) => {
     try {
       const auth = await getAuthHeaders();
@@ -1286,8 +1291,15 @@ export default function HomePage() {
   };
 
   const handleDeleteConversation = async (conversationId: string) => {
-    const confirmDelete = typeof window !== 'undefined' ? window.confirm('Delete this conversation and all its messages? This action cannot be undone.') : true;
-    if (!confirmDelete) return;
+    setDeleteConversationId(conversationId);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDeleteConversation = async () => {
+    const conversationId = deleteConversationId;
+    setShowDeleteModal(false);
+    setDeleteConversationId(null);
+    if (!conversationId) return;
 
     setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
     if (conversationId === activeConversationId && conversations.length > 1) {
@@ -2028,6 +2040,16 @@ export default function HomePage() {
           onClose={() => setShowUpgradeModal(false)}
           onSubscribed={handleSubscriptionSuccess}
           currentPlan={profile.plan}
+        />
+
+        <ConfirmModal
+          open={showDeleteModal}
+          title="Delete conversation"
+          description="Delete this conversation and all its messages? This action cannot be undone."
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          onConfirm={confirmDeleteConversation}
+          onCancel={() => { setShowDeleteModal(false); setDeleteConversationId(null); }}
         />
 
         {showAttachmentSheet ? (
