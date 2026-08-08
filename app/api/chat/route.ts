@@ -2,8 +2,10 @@ import { NextRequest } from 'next/server';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { getQuotaState, getQuotaWindowStart } from '@/lib/quota';
 import { getUserFromBearerToken } from '@/lib/supabase-server';
+import { recordUsage } from '@/lib/usage';
 import { getUserQuotaUsage, incrementUserQuotaUsage, getUserPlanIsPro } from '@/lib/quota-db';
 import { modelRegistry } from '@/lib/models';
+import { getUserMemory, rememberForUser } from '@/lib/memory';
 
 export async function POST(req: NextRequest) {
   const user = await getUserFromBearerToken(req.headers.get('authorization'));
@@ -19,7 +21,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { prompt, persona = 'Serious', attachments = [], history = [] } = body;
+  const { prompt, persona = 'Serious', context: contextOverride, attachments = [], history = [] } = body;
 
   const isPro = user ? await getUserPlanIsPro(user) : false;
   const windowStartMs = getQuotaWindowStart();
@@ -70,15 +72,33 @@ export async function POST(req: NextRequest) {
       }
     : { role: 'user', content: prompt };
 
-  const baseMessages = [
-    {
-      role: 'system',
-      content: `You are WIMPY, built by Wimpy Cooperations. Today's date is ${today}. You can generate images when asked — use the generate_image tool. Use the prior conversation turns provided to you as context; remember details the user already told you and stay consistent with earlier answers.`,
-    },
-    {
-      role: 'system',
-      content: `Respond in ${persona} mode. Keep answers accurate and useful.`,
-    },
+  // Always include a fixed identity system message first.
+  const identityMessage = {
+    role: 'system',
+    content: `You are WIMPY, built by Wimpy Cooperations. Today's date is ${today}. You can generate images when asked — use the generate_image tool. Use the prior conversation turns provided to you as context; remember details the user already told you and stay consistent with earlier answers.`,
+  };
+
+  // Persona or context override (context takes precedence if supplied)
+  const personaMessage = {
+    role: 'system',
+    content: contextOverride && typeof contextOverride === 'string' && contextOverride.trim().length > 0 ? contextOverride : `Respond in ${persona} mode. Keep answers accurate and useful.`,
+  };
+
+  // If the user has saved memory, fold it into the system prompt as 'what you know'.
+  let memorySystemMessage = null as any;
+  if (user) {
+    try {
+      const mem = await getUserMemory(user.id);
+      if (Array.isArray(mem) && mem.length > 0) {
+        const summary = mem.map((m: any) => `${m.key}: ${m.value}`).join('\n');
+        memorySystemMessage = { role: 'system', content: `What you know about the user:\n${summary}` };
+      }
+    } catch (e) {
+      console.error('[chat] failed to load user memory', e);
+    }
+  }
+
+  const baseMessages = [identityMessage, personaMessage,
     {
       role: 'system',
       content: `Formatting rule for math: every mathematical expression, equation, variable, or calculation — including every intermediate step in a multi-step derivation, not just the final result — must be wrapped in $...$ for inline math or $$...$$ on its own line for standalone/display math. Do NOT use square-bracket math delimiters like [ ... ] or \( ... \) / \[ ... \] anywhere — only $ and $$ are recognized by the renderer. A LaTeX command (\times, \text{}, \frac{}{}, \quad, etc.) must never appear outside a $...$ or $$...$$ region.`,
@@ -95,6 +115,11 @@ export async function POST(req: NextRequest) {
     userMessage,
   ];
 
+  if (memorySystemMessage) {
+    // insert memory right after identity/persona for clarity
+    baseMessages.splice(2, 0, memorySystemMessage);
+  }
+
   const generateImageTool = {
     type: 'function',
     function: {
@@ -106,6 +131,10 @@ export async function POST(req: NextRequest) {
           prompt: {
             type: 'string',
             description: 'The text prompt to generate an image from.',
+          },
+          source_image_url: {
+            type: 'string',
+            description: 'Optional URL of an existing image to use as the source for editing/variation.',
           },
           size: {
             type: 'string',
@@ -137,7 +166,23 @@ export async function POST(req: NextRequest) {
     },
   };
 
-  const tools = process.env.TAVILY_API_KEY ? [generateImageTool, webSearchTool] : [generateImageTool];
+  const rememberTool = {
+    type: 'function',
+    function: {
+      name: 'remember',
+      description: 'Store a short user fact or preference for future conversations.',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: { type: 'string' },
+          value: { type: 'string' },
+        },
+        required: ['key', 'value'],
+      },
+    },
+  };
+
+  const tools = process.env.TAVILY_API_KEY ? [generateImageTool, webSearchTool, rememberTool] : [generateImageTool, rememberTool];
   let finalMessages: Array<any> = baseMessages;
   let detectionUsage = 0;
 
@@ -165,7 +210,7 @@ export async function POST(req: NextRequest) {
       const choice = detectionData.choices?.[0]?.message;
       const toolCalls = choice?.tool_calls ?? [];
 
-      if (toolCalls.length > 0) {
+            if (toolCalls.length > 0) {
         const resolvedToolCalls: any[] = [];
         const toolResponses: any[] = [];
 
@@ -286,6 +331,7 @@ export async function POST(req: NextRequest) {
               controller.enqueue(encoder.encode('data: [DONE]\n\n'));
               break;
             }
+            
             try {
               const parsed = JSON.parse(payload);
               const delta = parsed.choices?.[0]?.delta?.content || '';
@@ -330,6 +376,16 @@ export async function POST(req: NextRequest) {
             const imageResponse = await generateImage(functionArgs.prompt);
 
             if (imageResponse?.imageUrl) {
+              // record image usage server-side
+              try {
+                if (user) {
+                  const estimated = Number(process.env.EST_IMAGE_TOKENS ?? 50);
+                  await recordUsage({ userId: user.id, event_type: 'image_generation', tokens: estimated, metadata: { promptLength: (functionArgs.prompt || '').length, size: functionArgs.size || null, source_image_url: functionArgs.source_image_url || null } });
+                }
+              } catch (e) {
+                console.warn('[usage] failed to record image generation', e);
+              }
+
               controller.enqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({ imageUrl: imageResponse.imageUrl, requestId, quota })}\n\n`
@@ -359,6 +415,11 @@ export async function POST(req: NextRequest) {
           const totalUsage = (finalUsage ?? 0) + detectionUsage;
           if (totalUsage > 0) {
             await incrementUserQuotaUsage(user.id, totalUsage);
+            try {
+              await recordUsage({ userId: user.id, event_type: 'chat', tokens: totalUsage, metadata: { detectionUsage } });
+            } catch (e) {
+              console.warn('[usage] failed to record chat usage', e);
+            }
           }
         }
 
@@ -394,17 +455,21 @@ export async function GET(req: NextRequest) {
   return Response.json({ quota, plan: isPro ? 'Pro' : 'Free' });
 }
 
-async function generateImage(prompt: string) {
+async function generateImage(args: string | { prompt?: string; source_image_url?: string; size?: string }) {
+  const parsed = typeof args === 'string' ? { prompt: args } : args ?? {};
+  const { prompt = '', source_image_url, size } = parsed;
+
+  const bodyPayload: any = { model: modelRegistry.image, prompt };
+  if (size) bodyPayload.size = size;
+  if (source_image_url) bodyPayload.image_url = source_image_url;
+
   const response = await fetch('https://openrouter.ai/api/v1/images', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
     },
-    body: JSON.stringify({
-      model: modelRegistry.image,
-      prompt,
-    }),
+    body: JSON.stringify(bodyPayload),
   });
 
   const payload = await response.json().catch(() => ({} as any));

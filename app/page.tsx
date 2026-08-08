@@ -44,6 +44,7 @@ type Conversation = {
   id: string;
   title: string;
   messages: Message[];
+  pinned?: boolean;
 };
 
 type ProfileState = {
@@ -178,6 +179,7 @@ async function fetchUserConversations(userId: string): Promise<Conversation[] | 
     id: row.id,
     title: row.title,
     messages: messagesByConversation[row.id] ?? [],
+    pinned: !!row.pinned,
   }));
 }
 
@@ -188,6 +190,7 @@ async function persistConversationToSupabase(conversation: Conversation, userId:
       id: conversation.id,
       user_id: userId,
       title: conversation.title,
+      pinned: conversation.pinned ?? false,
     },
     { onConflict: 'id' }
   );
@@ -257,6 +260,9 @@ export default function HomePage() {
   const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [settings, setSettings] = useState<SettingsState>(emptySettings);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
   const [actionSheetMessageId, setActionSheetMessageId] = useState<string | null>(null);
   const [isInputFocused, setIsInputFocused] = useState(false);
@@ -266,6 +272,12 @@ export default function HomePage() {
   const [quotaError, setQuotaError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editModalMessageId, setEditModalMessageId] = useState<string | null>(null);
+  const [editModalImage, setEditModalImage] = useState<string | null>(null);
+  const [editModalHistory, setEditModalHistory] = useState<string[]>([]);
+  const [editModalMeta, setEditModalMeta] = useState<any>(null);
+  const [editInstructions, setEditInstructions] = useState('');
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -294,6 +306,22 @@ export default function HomePage() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     handleOnline();
+    // flush any queued messages when connection returns
+    window.addEventListener('online', async () => {
+      const queued = window.localStorage.getItem('wimpyai-offline-queue');
+      if (!queued) return;
+      try {
+        const items = JSON.parse(queued) as Array<{ content: string }>; 
+        for (const it of items) {
+          // send queued messages
+          await sendMessage(it.content);
+        }
+        window.localStorage.removeItem('wimpyai-offline-queue');
+        showToast('Queued messages sent.');
+      } catch (e) {
+        // ignore
+      }
+    });
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -563,6 +591,7 @@ export default function HomePage() {
           content: 'I\'m WIMPY, built by Wimpy Cooperations. What would you like to work on?',
         },
       ],
+      pinned: false,
     };
     setConversations((prev) => [newConversation, ...prev]);
     setActiveConversationId(newConversation.id);
@@ -586,6 +615,25 @@ export default function HomePage() {
   const sendMessage = async (overrideContent?: string) => {
     const effectiveDraft = overrideContent ?? draft;
     if ((!effectiveDraft.trim() && !attachments.length) || isStreaming) return;
+    if (offline) {
+      // queue text-only messages when offline
+      try {
+        const queued = window.localStorage.getItem('wimpyai-offline-queue');
+        const arr = queued ? JSON.parse(queued) : [];
+        arr.push({ content: effectiveDraft });
+        window.localStorage.setItem('wimpyai-offline-queue', JSON.stringify(arr));
+        showToast('Message queued and will send when online.');
+        // add a local queued assistant placeholder
+        const queuedAssistant: Message = { id: createEntityId('msg'), role: 'assistant', content: '(Queued — will send when online)', images: [] };
+        const userMessage: Message = { id: createEntityId('msg'), role: 'user', content: effectiveDraft, images: [] };
+        setConversations((prev) => prev.map((c) => (c.id === activeConversationId ? { ...c, messages: [...c.messages, userMessage, queuedAssistant] } : c)));
+        setDraft('');
+      } catch (e) {
+        console.error('[sendMessage] queue failed', e);
+        showToast('Unable to queue message.');
+      }
+      return;
+    }
     const content = effectiveDraft.trim();
     const textAttachments = attachments.filter((attachment) => attachment.kind === 'text');
     const imageAttachments = attachments.filter((attachment) => attachment.kind === 'image');
@@ -990,6 +1038,26 @@ export default function HomePage() {
 
   const openSidebar = () => setSidebarOpen(true);
   const closeSidebar = () => setSidebarOpen(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowCommandPalette((s) => !s);
+      }
+    };
+    window.addEventListener('keydown', handler as any);
+    return () => window.removeEventListener('keydown', handler as any);
+  }, []);
+
+  const runCommand = (cmd: string) => {
+    if (cmd === 'new') createConversation();
+    if (cmd === 'search') { setSidebarOpen(true); }
+    if (cmd === 'profile') { window.location.href = '/profile'; }
+    setShowCommandPalette(false);
+  };
 
   const handleOutsideDrawerClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (event.currentTarget === event.target) {
@@ -1004,6 +1072,29 @@ export default function HomePage() {
 
   const closeMessageActionSheet = () => setActionSheetMessageId(null);
 
+  const openImageEditor = (messageId: string, imageUrl: string, meta?: any) => {
+    setEditModalMessageId(messageId);
+    setEditModalImage(imageUrl);
+    // load history from the message if present
+    const conv = conversations.find((c) => c.id === activeConversationId);
+    const msg = conv?.messages.find((m) => m.id === messageId);
+    const history = Array.isArray((msg as any)?.imagesHistory) ? [...((msg as any).imagesHistory as string[])] : [];
+    setEditModalHistory(history);
+    setEditModalMeta((msg as any)?.originalImageMeta ?? meta ?? { source: imageUrl });
+    setEditInstructions('');
+    setEditModalOpen(true);
+    closeMessageActionSheet();
+  };
+
+  const closeImageEditor = () => {
+    setEditModalOpen(false);
+    setEditModalMessageId(null);
+    setEditModalImage(null);
+    setEditModalHistory([]);
+    setEditModalMeta(null);
+    setEditInstructions('');
+  };
+
   const handleAttachmentButton = () => setShowAttachmentSheet(true);
   const closeAttachmentSheet = () => setShowAttachmentSheet(false);
 
@@ -1015,12 +1106,227 @@ export default function HomePage() {
     if (navigator.vibrate) navigator.vibrate(10);
   };
 
+  const handleRegenerate = async (messageId: string | null) => {
+    if (!messageId) return;
+    const conv = conversations.find((c) => c.id === activeConversationId);
+    if (!conv) return;
+    const idx = conv.messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+    const msg = conv.messages[idx];
+    if (msg.role !== 'assistant') return;
+
+    // find preceding user message
+    let userMsg: Message | undefined;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (conv.messages[i].role === 'user') {
+        userMsg = conv.messages[i];
+        break;
+      }
+    }
+    if (!userMsg) return;
+
+    // remove the old assistant message locally and in supabase
+    setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, messages: c.messages.filter((m) => m.id !== messageId) } : c)));
+    try {
+      if (profile.isConnected && profile.userId) {
+        await supabase.from('wai_messages').delete().eq('id', messageId);
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    closeMessageActionSheet();
+    // resend the same user message
+    void sendMessage(userMsg.content);
+  };
+
+  const handleEditAndResend = async (messageId: string | null) => {
+    if (!messageId) return;
+    const conv = conversations.find((c) => c.id === activeConversationId);
+    if (!conv) return;
+    const idx = conv.messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+    const msg = conv.messages[idx];
+    if (msg.role !== 'user') return;
+
+    const newText = window.prompt('Edit your message before resending:', msg.content);
+    if (newText == null) return;
+
+    // remove messages after this user message
+    const toKeep = conv.messages.slice(0, idx + 1);
+    const removed = conv.messages.slice(idx + 1).map((m) => m.id);
+    setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, messages: toKeep } : c)));
+
+    if (profile.isConnected && profile.userId && removed.length) {
+      try {
+        await supabase.from('wai_messages').delete().in('id', removed);
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    closeMessageActionSheet();
+    void sendMessage(newText);
+  };
+
+  const handleFeedback = async (messageId: string, vote: 1 | -1) => {
+    try {
+      const auth = await getAuthHeaders();
+      await fetch('/api/feedback', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId, vote }) });
+      showToast('Thanks for the feedback.');
+    } catch (e) {
+      console.error('[handleFeedback] failed', e);
+      showToast('Unable to send feedback.');
+    }
+  };
+
+  const handleEditImage = (messageId: string | null) => {
+    if (!messageId) return;
+    const conv = conversations.find((c) => c.id === activeConversationId);
+    if (!conv) return;
+    const idx = conv.messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+    const msg = conv.messages[idx];
+    const imageUrl = msg.imageUrl ?? (Array.isArray(msg.images) && msg.images[0]);
+    if (!imageUrl) return;
+    openImageEditor(messageId, imageUrl, { originalMessageId: messageId });
+  };
+
+  const confirmImageEdit = async () => {
+    if (!editModalMessageId || !editModalImage) return;
+    const conv = conversations.find((c) => c.id === activeConversationId);
+    if (!conv) return;
+
+    // push current image into history
+    setEditModalHistory((prev) => [editModalImage as string, ...prev].slice(0, 10));
+
+    const assistantMessage: Message = { id: createEntityId('msg'), role: 'assistant', content: 'Generating edited image...', images: [editModalImage] };
+    setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, messages: [...c.messages, assistantMessage] } : c)));
+
+    try {
+      const resp = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: editInstructions || 'Edit image as requested.', source_image_url: editModalImage }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => null);
+        const msgText = err?.error ? `Image edit failed: ${err.error}` : 'Image edit failed';
+        setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, messages: c.messages.map((m) => m.id === assistantMessage.id ? { ...m, content: msgText } : m) } : c)));
+        return;
+      }
+      const body = await resp.json().catch(() => null);
+      const newUrl = body?.imageUrl;
+      if (!newUrl) {
+        setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, messages: c.messages.map((m) => m.id === assistantMessage.id ? { ...m, content: 'Image edit returned no image.' } : m) } : c)));
+        return;
+      }
+
+      // update assistant placeholder with edited image
+      setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, messages: c.messages.map((m) => m.id === assistantMessage.id ? { ...m, content: 'Edited image', imageUrl: newUrl, images: [newUrl], } : m) } : c)));
+
+      // update original message to record history and original metadata
+      setConversations((prev) => prev.map((c) => {
+        if (c.id !== conv.id) return c;
+        return {
+          ...c,
+          messages: c.messages.map((m) => {
+            if (m.id !== editModalMessageId) return m;
+            const prevHistory = Array.isArray((m as any).imagesHistory) ? (m as any).imagesHistory : [];
+            return {
+              ...m,
+              originalImageMeta: (m as any).originalImageMeta ?? editModalMeta ?? { source: editModalImage },
+              imagesHistory: [...(prevHistory || []), editModalImage],
+              imageUrl: newUrl,
+              images: [newUrl],
+            } as Message & { imagesHistory?: string[]; originalImageMeta?: any };
+          }),
+        };
+      }));
+
+      if (profile.isConnected && profile.userId) {
+        try {
+          await persistMessageToSupabase(conv.id, { id: createEntityId('msg'), role: 'assistant', content: 'Edited image', images: [newUrl], imageUrl: newUrl }, profile.userId);
+        } catch (e) {
+          // ignore
+        }
+      }
+    } catch (e) {
+      console.error('[confirmImageEdit] failed', e);
+      setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, messages: c.messages.map((m) => m.id === assistantMessage.id ? { ...m, content: 'Image edit failed.' } : m) } : c)));
+    } finally {
+      closeImageEditor();
+    }
+  };
+
+  const undoImageEdit = () => {
+    if (!editModalMessageId) return;
+    // revert last edit by popping history for the message
+    const conv = conversations.find((c) => c.id === activeConversationId);
+    if (!conv) return;
+    setConversations((prev) => prev.map((c) => {
+      if (c.id !== conv.id) return c;
+      return {
+        ...c,
+        messages: c.messages.map((m) => {
+          if (m.id !== editModalMessageId) return m;
+          const history = Array.isArray((m as any).imagesHistory) ? [...((m as any).imagesHistory as string[])] : [];
+          if (!history.length) return m;
+          const last = history.pop() as string;
+          return {
+            ...m,
+            imageUrl: last,
+            images: [last],
+            imagesHistory: history,
+          } as Message & { imagesHistory?: string[] };
+        }),
+      };
+    }));
+    closeImageEditor();
+  };
+
   const handleDeleteConversation = (conversationId: string) => {
     setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
     if (conversationId === activeConversationId && conversations.length > 1) {
       setActiveConversationId(conversations[0].id);
     }
     if (navigator.vibrate) navigator.vibrate([10, 20, 10]);
+  };
+
+  const doSearch = async () => {
+    if (!searchQuery || searchQuery.trim().length === 0) return setSearchResults([]);
+    setSearchLoading(true);
+    try {
+      const resp = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}&limit=20`);
+      if (!resp.ok) {
+        setSearchResults([]);
+        return;
+      }
+      const body = await resp.json().catch(() => null);
+      setSearchResults(body?.results ?? []);
+    } catch (e) {
+      console.error('[doSearch] failed', e);
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const openResult = async (result: any) => {
+    if (!result || !result.conversation_id) return;
+    // close sidebar and activate conversation
+    setSidebarOpen(false);
+    setActiveConversationId(result.conversation_id);
+    // give React a tick to render the selected conversation
+    setTimeout(() => {
+      const el = document.getElementById(`msg-${result.id}`);
+      if (el && chatContainerRef.current) {
+        // scroll the container so the message is visible
+        const container = chatContainerRef.current;
+        const top = (el as HTMLElement).offsetTop - container.offsetTop - container.clientHeight / 2 + (el as HTMLElement).clientHeight / 2;
+        container.scrollTo({ top, behavior: 'smooth' });
+      }
+    }, 150);
   };
 
   const handleOpenCamera = () => {
@@ -1113,7 +1419,47 @@ export default function HomePage() {
       }
 
       if (isPdf) {
-        showToast(`${file.name} is a PDF and not yet supported.`);
+        // Send PDF as multipart/form-data to server extractor to avoid base64 bloat
+        try {
+          const form = new FormData();
+          form.append('file', file, file.name);
+          const resp = await fetch('/api/extract-pdf', { method: 'POST', body: form });
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => null);
+            if (err?.error === 'file_too_large') {
+              showToast(`${file.name} exceeds the maximum size of 10MB.`);
+            } else {
+              showToast(`Failed to extract ${file.name}.`);
+            }
+            continue;
+          }
+          const body = await resp.json().catch(() => null);
+          const fileText = body?.text ?? '';
+          if (!fileText) {
+            showToast(`No extractable text found in ${file.name}.`);
+            continue;
+          }
+
+          const truncated = fileText.length > MAX_TEXT_ATTACHMENT_CHARS;
+          const content = truncated
+            ? `${fileText.slice(0, MAX_TEXT_ATTACHMENT_CHARS)}\n\n[...truncated, file is ${fileText.length} characters]`
+            : fileText;
+
+          if (truncated) showToast(`Attached ${file.name}, truncated to ${MAX_TEXT_ATTACHMENT_CHARS} characters.`);
+
+          nextAttachments.push({
+            id: createEntityId('att'),
+            name: file.name,
+            type: file.type || 'application/pdf',
+            kind: 'text',
+            size: file.size,
+            content,
+            truncated,
+          });
+        } catch (error) {
+          console.error('[handleAttach] pdf extract failed', file.name, error);
+          showToast(`Unable to extract ${file.name}.`);
+        }
         continue;
       }
 
@@ -1183,6 +1529,32 @@ export default function HomePage() {
               </div>
             </div>
             <div className="p-4">
+              <div className="mb-3">
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void doSearch(); }}
+                  placeholder="Search conversations/messages"
+                  className="w-full rounded-lg border p-2"
+                />
+                <div className="mt-2">
+                  <button className="rounded-2xl border px-3 py-1 text-sm" onClick={() => void doSearch()}>{searchLoading ? 'Searching…' : 'Search'}</button>
+                </div>
+                {searchResults && (
+                  <div className="mt-3 max-h-40 overflow-auto">
+                    {searchResults.length === 0 ? (
+                      <div className="text-sm text-[var(--muted)]">No results</div>
+                    ) : (
+                      searchResults.map((r: any) => (
+                        <button key={r.id} onClick={() => openResult(r)} className="mb-2 w-full text-left rounded-lg border p-2 bg-[var(--panel-strong)]">
+                          <div className="text-xs text-[var(--muted)]">{new Date(r.created_at).toLocaleString()}</div>
+                          <div className="text-sm">{r.content.slice(0, 200)}</div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
               <div className="rounded-3xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
                 <p className="text-sm font-semibold">{profile.displayName}</p>
                 <p className="text-xs text-[var(--muted)]">{profile.isConnected ? `Connected • ${profile.plan}` : 'Guest • Free'}</p>
@@ -1308,6 +1680,7 @@ export default function HomePage() {
                       let touchTimer: number | undefined;
                       return (
                         <article
+                          id={`msg-${message.id}`}
                           key={message.id}
                           className={`flex gap-3 ${isUser ? 'justify-end' : ''}`}
                           onTouchStart={() => {
@@ -1369,6 +1742,12 @@ export default function HomePage() {
                             ) : (
                               <div className="whitespace-pre-wrap text-sm">{message.content}</div>
                             )}
+                            {message.role === 'assistant' ? (
+                              <div className="mt-2 flex gap-2">
+                                <button className="rounded px-2 py-1 border" onClick={() => handleFeedback(message.id, 1)}>👍</button>
+                                <button className="rounded px-2 py-1 border" onClick={() => handleFeedback(message.id, -1)}>👎</button>
+                              </div>
+                            ) : null}
                           </div>
                         </article>
                       );
@@ -1526,7 +1905,10 @@ export default function HomePage() {
                 </button>
               </div>
               <div className="mt-6 space-y-3">
-                {conversations.map((conversation) => (
+                {conversations
+                  .slice()
+                  .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
+                  .map((conversation) => (
                   <div key={conversation.id} className="group relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)]">
                     <button
                       className={`w-full px-4 py-4 text-left ${activeConversationId === conversation.id ? 'bg-[var(--accent-soft)]' : ''}`}
@@ -1538,13 +1920,35 @@ export default function HomePage() {
                       <div className="font-medium">{conversation.title}</div>
                       <div className="text-xs text-[var(--muted)]">{conversation.messages.length} messages</div>
                     </button>
-                    <button
-                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-[var(--border)] bg-[var(--panel-strong)] p-2 text-[var(--muted)] opacity-0 transition-opacity duration-200 group-hover:opacity-100"
-                      onClick={() => handleDeleteConversation(conversation.id)}
-                      aria-label="Delete conversation"
-                    >
-                      ×
-                    </button>
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex gap-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                      <button
+                        className="rounded-full border border-[var(--border)] bg-[var(--panel-strong)] p-2 text-[var(--muted)]"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const auth = await getAuthHeaders();
+                            const resp = await fetch('/api/conversations/pin', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: conversation.id, pinned: !conversation.pinned }) });
+                            if (resp.ok) {
+                              const body = await resp.json().catch(() => null);
+                              const updated = body?.conversation;
+                              setConversations((prev) => prev.map((c) => (c.id === conversation.id ? { ...c, pinned: updated?.pinned ?? !conversation.pinned } : c)));
+                            }
+                          } catch (e) {
+                            console.error('[pin] failed', e);
+                          }
+                        }}
+                        aria-label={conversation.pinned ? 'Unpin conversation' : 'Pin conversation'}
+                      >
+                        {conversation.pinned ? '📌' : '📍'}
+                      </button>
+                      <button
+                        className="rounded-full border border-[var(--border)] bg-[var(--panel-strong)] p-2 text-[var(--muted)]"
+                        onClick={() => handleDeleteConversation(conversation.id)}
+                        aria-label="Delete conversation"
+                      >
+                        ×
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1587,6 +1991,19 @@ export default function HomePage() {
           </div>
         ) : null}
 
+        {showCommandPalette ? (
+          <div className="fixed inset-0 z-70 flex items-start justify-center p-4" onClick={() => setShowCommandPalette(false)}>
+            <div className="w-full max-w-xl rounded-lg bg-[var(--panel)] p-4" onClick={(e) => e.stopPropagation()}>
+              <input autoFocus value={commandQuery} onChange={(e) => setCommandQuery(e.target.value)} className="w-full rounded-md border p-2" placeholder="Type a command (new, search, profile)" />
+              <div className="mt-3 space-y-2">
+                {['new', 'search', 'profile'].filter(c => c.includes(commandQuery)).map(c => (
+                  <button key={c} className="w-full text-left rounded-md border p-2" onClick={() => runCommand(c)}>{c}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <UpgradeModal
           open={showUpgradeModal}
           onClose={() => setShowUpgradeModal(false)}
@@ -1620,12 +2037,69 @@ export default function HomePage() {
               <div className="mx-auto mb-4 h-1.5 w-16 rounded-full bg-[var(--border)]"></div>
               <p className="mb-4 text-lg font-semibold">Message actions</p>
               <div className="space-y-3">
-                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={() => handleCopyMessage(actionSheetMessageId)}>
-                  Copy text
-                </button>
-                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={closeMessageActionSheet}>
-                  Cancel
-                </button>
+                {(() => {
+                  const actionMsg = activeConversation?.messages.find((m) => m.id === actionSheetMessageId);
+                  return (
+                    <>
+                      <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={() => handleCopyMessage(actionSheetMessageId)}>
+                        Copy text
+                      </button>
+                          {actionMsg?.role === 'assistant' ? (
+                            <>
+                              <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={() => handleRegenerate(actionSheetMessageId)}>
+                                Regenerate
+                              </button>
+                              {(actionMsg?.imageUrl || (actionMsg?.images && actionMsg.images.length > 0)) ? (
+                                <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={() => handleEditImage(actionSheetMessageId)}>
+                                  Edit Image
+                                </button>
+                              ) : null}
+                            </>
+                          ) : null}
+                      {actionMsg?.role === 'user' ? (
+                        <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={() => handleEditAndResend(actionSheetMessageId)}>
+                          Edit & Resend
+                        </button>
+                      ) : null}
+                      <button className="w-full rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] px-4 py-4 text-left text-base" onClick={closeMessageActionSheet}>
+                        Cancel
+                      </button>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {editModalOpen ? (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4" onClick={closeImageEditor}>
+            <div className="w-full max-w-3xl rounded-2xl bg-[var(--panel)] p-6" onClick={(e) => e.stopPropagation()}>
+              <h3 className="mb-3 text-lg font-semibold">Edit Image</h3>
+              <div className="flex gap-4">
+                <div className="w-1/2">
+                  {editModalImage ? <img src={editModalImage} alt="preview" className="w-full rounded-md" /> : <div className="h-48 w-full rounded-md bg-[var(--border)]"></div>}
+                  <div className="mt-2 text-sm text-muted-foreground">Original: {editModalMeta?.source ?? 'unknown'}</div>
+                  {editModalHistory.length > 0 && (
+                    <div className="mt-2">
+                      <div className="text-sm font-medium">History</div>
+                      <ul className="mt-1 text-sm list-disc list-inside">
+                        {editModalHistory.map((h, i) => (
+                          <li key={i}>{h}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                <div className="w-1/2">
+                  <label className="block text-sm font-medium">Edit instructions</label>
+                  <textarea value={editInstructions} onChange={(e) => setEditInstructions(e.target.value)} className="mt-1 h-48 w-full rounded-md border p-2" placeholder="Describe the edit to apply (e.g. make background transparent)"></textarea>
+                  <div className="mt-4 flex gap-2">
+                    <button className="rounded-lg bg-blue-600 px-4 py-2 text-white" onClick={confirmImageEdit}>Apply</button>
+                    <button className="rounded-lg border px-4 py-2" onClick={closeImageEditor}>Cancel</button>
+                    <button className="rounded-lg border px-4 py-2" onClick={undoImageEdit}>Undo</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

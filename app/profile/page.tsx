@@ -151,6 +151,121 @@ export default function ProfilePage() {
     showToast('Signed out successfully.');
   };
 
+  const [memory, setMemory] = useState<Array<{ id: string; key: string; value: string; created_at: string }>>([]);
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+  const [referralCredits, setReferralCredits] = useState<number>(0);
+  const [claimCode, setClaimCode] = useState('');
+  const [usage, setUsage] = useState<Array<{ id: string; event_type: string; tokens: number; cost: number; created_at: string }>>([]);
+
+  const loadMemory = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) return;
+      const res = await fetch('/api/memory', { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const json = await res.json();
+      setMemory(json.memory ?? []);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const loadReferralAndUsage = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) return;
+      const res = await fetch('/api/referral', { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const json = await res.json();
+        setReferralCode(json.referral?.code ?? null);
+        setReferralCredits(json.credits ?? 0);
+      }
+      const ures = await fetch('/api/usage', { headers: { Authorization: `Bearer ${token}` } });
+      if (ures.ok) {
+        const ju = await ures.json();
+        setUsage(ju.usage ?? []);
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    void loadMemory();
+    void loadReferralAndUsage();
+  }, [profile.isConnected]);
+
+  const handleDeleteMemory = async (id: string) => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) return;
+      const res = await fetch('/api/memory', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ id }) });
+      if (res.ok) {
+        setMemory((prev) => prev.filter((m) => m.id !== id));
+        showToast('Memory item deleted.');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const createReferral = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) return;
+      const res = await fetch('/api/referral', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const j = await res.json();
+        setReferralCode(j.referral?.code ?? null);
+        showToast('Referral link created.');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const claimReferral = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) return;
+      const res = await fetch('/api/referral/claim', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ code: claimCode }) });
+      if (res.ok) {
+        showToast('Referral claimed — credits granted.');
+        setClaimCode('');
+        void loadReferralAndUsage();
+      } else {
+        const j = await res.json();
+        showToast(j?.error ?? 'Unable to claim');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const usageSparkline = () => {
+    if (!usage || usage.length === 0) return null;
+    // build points from last 24 entries
+    const items = usage.slice(0, 24).reverse();
+    const max = Math.max(...items.map(i => i.tokens), 1);
+    const width = 320, height = 64, pad = 6;
+    const step = (width - pad * 2) / Math.max(1, items.length - 1);
+    const points = items.map((it, idx) => {
+      const x = pad + idx * step;
+      const y = pad + (1 - (it.tokens / max)) * (height - pad * 2);
+      return `${x},${y}`;
+    }).join(' ');
+    return (
+      <svg width={width} height={height} className="rounded-md bg-[var(--bg)]" aria-hidden>
+        <polyline fill="none" stroke="#60A5FA" strokeWidth={2} points={points} />
+      </svg>
+    );
+  };
+
   const handleToggle = (key: keyof SettingsState, value: boolean) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
@@ -293,6 +408,53 @@ export default function ProfilePage() {
             <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
               <p className="text-sm font-medium">Data controls</p>
               <p className="mt-1 text-sm text-[var(--muted)]">Export your profile and settings at any time. Everything is stored locally in this browser for now.</p>
+            </div>
+            <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
+              <p className="text-sm font-medium">Remembered items</p>
+              <p className="mt-1 text-sm text-[var(--muted)]">Facts and preferences the assistant has stored for you.</p>
+              <div className="mt-3 space-y-2">
+                {memory.length ? (
+                  memory.map((m) => (
+                    <div key={m.id} className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm">
+                      <div>
+                        <div className="font-medium">{m.key}</div>
+                        <div className="text-[var(--muted)] text-sm">{m.value}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button className="rounded px-3 py-1 text-sm" onClick={() => handleDeleteMemory(m.id)}>Delete</button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="mt-2 text-sm text-[var(--muted)]">No remembered items yet.</div>
+                )}
+              </div>
+            </div>
+            <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
+              <p className="text-sm font-medium">Referral rewards</p>
+              <p className="mt-1 text-sm text-[var(--muted)]">Invite friends and earn credits when they join using your referral link.</p>
+              <div className="mt-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <input value={referralCode ?? ''} readOnly className="w-full rounded-md border p-2 bg-[var(--bg)] text-sm" placeholder="Create a referral link" />
+                  </div>
+                  <button className="rounded px-3 py-2 border" onClick={createReferral}>Create</button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input value={claimCode} onChange={(e) => setClaimCode(e.target.value)} className="flex-1 rounded-md border p-2 text-sm" placeholder="Enter referral code" />
+                  <button className="rounded px-3 py-2 border" onClick={claimReferral}>Claim</button>
+                </div>
+                <div className="text-sm text-[var(--muted)]">Credits: <span className="font-medium">{referralCredits}</span></div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
+              <p className="text-sm font-medium">Usage history</p>
+              <p className="mt-1 text-sm text-[var(--muted)]">Recent token usage (most recent first).</p>
+              <div className="mt-3">
+                {usageSparkline()}
+                <div className="mt-2 text-xs text-[var(--muted)]">Showing up to 24 recent usage points.</div>
+              </div>
             </div>
             <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
               <p className="text-sm font-medium">Legal pages</p>

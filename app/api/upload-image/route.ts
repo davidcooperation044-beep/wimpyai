@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { modelRegistry } from '@/lib/models';
 import { getUserFromBearerToken } from '@/lib/supabase-server';
+import { recordUsage } from '@/lib/usage';
 
 export async function POST(req: NextRequest) {
   const user = await getUserFromBearerToken(req.headers.get('authorization'));
@@ -57,6 +58,15 @@ export async function POST(req: NextRequest) {
     }
 
     const analysis = payload?.choices?.[0]?.message?.content || 'I could not analyze that image right now.';
+    try {
+      if (user) {
+        const estimated = Math.max(5, Math.ceil((prompt || '').length / 50));
+        await recordUsage({ userId: user.id, event_type: 'vision_analysis', tokens: estimated, metadata: { promptLength: (prompt || '').length } });
+      }
+    } catch (e) {
+      console.warn('[usage] failed to record upload-image usage', e);
+    }
+
     return Response.json({ analysis });
   } catch (error) {
     console.error('[upload-image] failed', error);
