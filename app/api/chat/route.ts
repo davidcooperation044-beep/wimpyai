@@ -409,9 +409,13 @@ async function generateImage(prompt: string) {
   return imageUrl ? { imageUrl } : null;
 }
 
-async function webSearch(query: string) {
+type WebSearchResult = { title: string; snippet: string; url: string };
+
+type WebSearchResponse = { answer: string; results: WebSearchResult[] };
+
+async function webSearch(query: string): Promise<WebSearchResponse> {
   if (!process.env.TAVILY_API_KEY) {
-    return { answer: '', results: [] as Array<{ title: string; snippet: string; url: string }> };
+    return { answer: '', results: [] };
   }
 
   const response = await fetch('https://api.tavily.com/search', {
