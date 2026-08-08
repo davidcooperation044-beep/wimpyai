@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
   };
 
   const tools = process.env.TAVILY_API_KEY ? [generateImageTool, webSearchTool] : [generateImageTool];
-  let finalMessages = baseMessages;
+  let finalMessages: Array<any> = baseMessages;
   let detectionUsage = 0;
 
   if (process.env.TAVILY_API_KEY && prompt?.trim()) {
@@ -452,7 +452,7 @@ async function webSearch(query: string): Promise<WebSearchResponse> {
           : '',
       url: typeof item.url === 'string' ? item.url : typeof item.link === 'string' ? item.link : '',
     }))
-    .filter((item: any) => item.url);
+    .filter((item: WebSearchResult) => item.url);
 
   return { answer, results };
 }
