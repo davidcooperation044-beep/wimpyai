@@ -16,7 +16,7 @@ export default function manifest(): MetadataRoute.Manifest {
       { src: '/wimpyai-logo-render-removebg-preview.png', sizes: '96x96', type: 'image/png' },
       { src: '/wimpyai-logo-render-removebg-preview.png', sizes: '128x128', type: 'image/png' },
       { src: '/wimpyai-logo-render-removebg-preview.png', sizes: '192x192', type: 'image/png' },
-      { src: '/wimpyai-logo-render-removebg-preview.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+      { src: '/wimpyai-logo-render-removebg-preview.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
   };
 }
