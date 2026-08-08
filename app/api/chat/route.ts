@@ -6,6 +6,7 @@ import { recordUsage } from '@/lib/usage';
 import { getUserQuotaUsage, incrementUserQuotaUsage, getUserPlanIsPro } from '@/lib/quota-db';
 import { modelRegistry } from '@/lib/models';
 import { getUserMemory, rememberForUser } from '@/lib/memory';
+import { COMPANY_SCRIPT } from '@/lib/company-script';
 
 export async function POST(req: NextRequest) {
   const user = await getUserFromBearerToken(req.headers.get('authorization'));
@@ -98,7 +99,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const baseMessages = [identityMessage, personaMessage,
+  const companyScriptMessage = {
+    role: 'system',
+    content: `The following company reference content is sourced from the company reference file.\n\n${COMPANY_SCRIPT}`,
+  };
+
+  const baseMessages = [identityMessage, personaMessage, companyScriptMessage,
     {
       role: 'system',
       content: `Formatting rule for math: every mathematical expression, equation, variable, or calculation — including every intermediate step in a multi-step derivation, not just the final result — must be wrapped in $...$ for inline math or $$...$$ on its own line for standalone/display math. Do NOT use square-bracket math delimiters like [ ... ] or \( ... \) / \[ ... \] anywhere — only $ and $$ are recognized by the renderer. A LaTeX command (\times, \text{}, \frac{}{}, \quad, etc.) must never appear outside a $...$ or $$...$$ region.`,
