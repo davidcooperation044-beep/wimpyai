@@ -1291,6 +1291,15 @@ export default function HomePage() {
       setActiveConversationId(conversations[0].id);
     }
     if (navigator.vibrate) navigator.vibrate([10, 20, 10]);
+    if (profile.userId) {
+      fetch('/api/conversations/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversationId }),
+      }).catch((error) => {
+        console.error('[handleDeleteConversation] failed to delete conversation remotely', error);
+      });
+    }
   };
 
   const doSearch = async () => {
