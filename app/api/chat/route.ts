@@ -164,32 +164,55 @@ export async function POST(req: NextRequest) {
       detectionUsage = detectionData.usage?.total_tokens ?? 0;
       const choice = detectionData.choices?.[0]?.message;
       const toolCalls = choice?.tool_calls ?? [];
-      const searchCall = toolCalls.find((tc: any) => tc.function?.name === 'web_search');
 
-      if (searchCall) {
-        const args = JSON.parse(searchCall.function.arguments || '{}');
-        const query = typeof args.query === 'string' ? args.query : null;
+      if (toolCalls.length > 0) {
+        const resolvedToolCalls: any[] = [];
+        const toolResponses: any[] = [];
 
-        if (query) {
-          const { answer, results } = await webSearch(query);
-          const resultsText = [
-            answer ? `Summary: ${answer}` : null,
-            results.length
-              ? results.map((r, i) => `${i + 1}. ${r.title} — ${r.snippet} (${r.url})`).join('\n')
-              : 'No results found.',
-          ]
-            .filter(Boolean)
-            .join('\n\n');
+        for (const tc of toolCalls) {
+          if (tc.function?.name === 'web_search') {
+            const args = JSON.parse(tc.function.arguments || '{}');
+            const query = typeof args.query === 'string' ? args.query : null;
+            if (!query) continue;
 
+            const { answer, results } = await webSearch(query);
+            const resultsText = [
+              answer ? `Summary: ${answer}` : null,
+              results.length
+                ? results.map((r, i) => `${i + 1}. ${r.title} — ${r.snippet} (${r.url})`).join('\n')
+                : 'No results found.',
+            ]
+              .filter(Boolean)
+              .join('\n\n');
+
+            resolvedToolCalls.push(tc);
+            toolResponses.push({ role: 'tool', tool_call_id: tc.id, name: 'web_search', content: resultsText });
+            continue;
+          }
+
+          console.warn(`[chat] detection pass produced unhandled tool call: ${tc.function?.name}`);
+        }
+
+        if (resolvedToolCalls.length > 0) {
           finalMessages = [
             ...baseMessages,
-            { role: 'assistant', content: null, tool_calls: toolCalls },
-            { role: 'tool', tool_call_id: searchCall.id, name: 'web_search', content: resultsText },
+            { role: 'assistant', content: null, tool_calls: resolvedToolCalls },
+            ...toolResponses,
           ];
         }
       }
     } catch (error) {
       console.error('[searchDetection] failed', error);
+    }
+  }
+
+  const assistantToolMsg = finalMessages.find((m: any) => m.role === 'assistant' && m.tool_calls);
+  if (assistantToolMsg) {
+    const respondedIds = new Set(finalMessages.filter((m: any) => m.role === 'tool').map((m: any) => m.tool_call_id));
+    const unresolved = assistantToolMsg.tool_calls.filter((tc: any) => !respondedIds.has(tc.id));
+    if (unresolved.length > 0) {
+      console.error('[chat] unresolved tool_call_ids before pass 2', unresolved.map((tc: any) => tc.id));
+      finalMessages = baseMessages;
     }
   }
 
