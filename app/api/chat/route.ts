@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (quota.remaining <= 0) {
-    return Response.json({ error: 'quota-exceeded', resetsAt: quota.resetsAt }, { status: 429 });
+    return Response.json({ error: 'quota-exceeded', quota, resetsAt: quota.resetsAt }, { status: 429 });
   }
 
   // Sanitize/clip incoming history so we don't blow up token usage and so we
@@ -70,6 +70,129 @@ export async function POST(req: NextRequest) {
       }
     : { role: 'user', content: prompt };
 
+  const baseMessages = [
+    {
+      role: 'system',
+      content: `You are WIMPY, built by Wimpy Cooperations. Today's date is ${today}. You can generate images when asked — use the generate_image tool. Use the prior conversation turns provided to you as context; remember details the user already told you and stay consistent with earlier answers.`,
+    },
+    {
+      role: 'system',
+      content: `Respond in ${persona} mode. Keep answers accurate and useful.`,
+    },
+    {
+      role: 'system',
+      content: `Formatting rule for math: every mathematical expression, equation, variable, or calculation — including every intermediate step in a multi-step derivation, not just the final result — must be wrapped in $...$ for inline math or $$...$$ on its own line for standalone/display math. Do NOT use square-bracket math delimiters like [ ... ] or \( ... \) / \[ ... \] anywhere — only $ and $$ are recognized by the renderer. A LaTeX command (\times, \text{}, \frac{}{}, \quad, etc.) must never appear outside a $...$ or $$...$$ region.`,
+    },
+    ...(process.env.TAVILY_API_KEY
+      ? [
+          {
+            role: 'system',
+            content: `If a question depends on events, prices, releases, sports results, or anything else that may have changed recently, use the web_search tool rather than answering from memory. Don't guess about anything time-sensitive.`,
+          },
+        ]
+      : []),
+    ...sanitizedHistory,
+    userMessage,
+  ];
+
+  const generateImageTool = {
+    type: 'function',
+    function: {
+      name: 'generate_image',
+      description: 'Generate an image from a text prompt and return the image URL.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: {
+            type: 'string',
+            description: 'The text prompt to generate an image from.',
+          },
+          size: {
+            type: 'string',
+            enum: ['256x256', '512x512', '1024x1024'],
+            description: 'The requested image size.',
+          },
+        },
+        required: ['prompt'],
+      },
+    },
+  };
+
+  const webSearchTool = {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description:
+        'Search the web for current information. Use this whenever a question depends on recent events, current prices, releases, news, sports results, or anything else that may have changed since your training data — do not answer time-sensitive questions from memory alone.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The search query.',
+          },
+        },
+        required: ['query'],
+      },
+    },
+  };
+
+  const tools = process.env.TAVILY_API_KEY ? [generateImageTool, webSearchTool] : [generateImageTool];
+  let finalMessages = baseMessages;
+  let detectionUsage = 0;
+
+  if (process.env.TAVILY_API_KEY && prompt?.trim()) {
+    try {
+      const detectionResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'HTTP-Referer': 'https://wimpyai.example',
+          'X-Title': 'WimpyAI',
+        },
+        body: JSON.stringify({
+          model: modelRegistry.chat,
+          stream: false,
+          tool_choice: 'auto',
+          tools,
+          messages: baseMessages,
+        }),
+      });
+
+      const detectionData = await detectionResponse.json().catch(() => ({} as any));
+      detectionUsage = detectionData.usage?.total_tokens ?? 0;
+      const choice = detectionData.choices?.[0]?.message;
+      const toolCalls = choice?.tool_calls ?? [];
+      const searchCall = toolCalls.find((tc: any) => tc.function?.name === 'web_search');
+
+      if (searchCall) {
+        const args = JSON.parse(searchCall.function.arguments || '{}');
+        const query = typeof args.query === 'string' ? args.query : null;
+
+        if (query) {
+          const { answer, results } = await webSearch(query);
+          const resultsText = [
+            answer ? `Summary: ${answer}` : null,
+            results.length
+              ? results.map((r, i) => `${i + 1}. ${r.title} — ${r.snippet} (${r.url})`).join('\n')
+              : 'No results found.',
+          ]
+            .filter(Boolean)
+            .join('\n\n');
+
+          finalMessages = [
+            ...baseMessages,
+            { role: 'assistant', content: null, tool_calls: toolCalls },
+            { role: 'tool', tool_call_id: searchCall.id, name: 'web_search', content: resultsText },
+          ];
+        }
+      }
+    } catch (error) {
+      console.error('[searchDetection] failed', error);
+    }
+  }
+
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -82,47 +205,8 @@ export async function POST(req: NextRequest) {
       model: modelRegistry.chat,
       stream: true,
       tool_choice: 'auto',
-      tools: [
-        {
-          name: 'generate_image',
-          type: 'function',
-          function: {
-            name: 'generate_image',
-            description: 'Generate an image from a text prompt and return the image URL.',
-            parameters: {
-              type: 'object',
-              properties: {
-                prompt: {
-                  type: 'string',
-                  description: 'The text prompt to generate an image from.',
-                },
-                size: {
-                  type: 'string',
-                  enum: ['256x256', '512x512', '1024x1024'],
-                  description: 'The requested image size.',
-                },
-              },
-              required: ['prompt'],
-            },
-          },
-        },
-      ],
-      messages: [
-        {
-          role: 'system',
-          content: `You are WIMPY, built by Wimpy Cooperations. Today's date is ${today}. You can generate images when asked — use the generate_image tool. Use the prior conversation turns provided to you as context; remember details the user already told you and stay consistent with earlier answers.`,
-        },
-        {
-          role: 'system',
-          content: `Respond in ${persona} mode. Keep answers accurate and useful.`,
-        },
-        {
-          role: 'system',
-          content: `Formatting rule for math: every mathematical expression, equation, variable, or calculation — including every intermediate step in a multi-step derivation, not just the final result — must be wrapped in $...$ for inline math or $$...$$ on its own line for standalone/display math. Do NOT use square-bracket math delimiters like [ ... ] or \\( ... \\) / \\[ ... \\] anywhere — only $ and $$ are recognized by the renderer. A LaTeX command (\times, \text{}, \frac{}{}, \quad, etc.) must never appear outside a $...$ or $$...$$ region.`,
-        },
-        ...sanitizedHistory,
-        userMessage,
-      ],
+      tools,
+      messages: finalMessages,
     }),
   });
 
@@ -248,8 +332,11 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        if (user && finalUsage !== null) {
-          await incrementUserQuotaUsage(user.id, finalUsage);
+        if (user) {
+          const totalUsage = (finalUsage ?? 0) + detectionUsage;
+          if (totalUsage > 0) {
+            await incrementUserQuotaUsage(user.id, totalUsage);
+          }
         }
 
         controller.close();
@@ -266,6 +353,22 @@ export async function POST(req: NextRequest) {
       Connection: 'keep-alive',
     },
   });
+}
+
+export async function GET(req: NextRequest) {
+  const user = await getUserFromBearerToken(req.headers.get('authorization'));
+  const userId = user?.id ?? 'guest';
+
+  if (!user && process.env.REQUIRE_AUTH_FOR_CHAT === 'true') {
+    return Response.json({ error: 'Authentication required' }, { status: 401 });
+  }
+
+  const isPro = user ? await getUserPlanIsPro(user) : false;
+  const windowStartMs = getQuotaWindowStart();
+  const tokensUsed = user ? await getUserQuotaUsage(user.id) : 0;
+  const quota = getQuotaState(tokensUsed, isPro, windowStartMs);
+
+  return Response.json({ quota, plan: isPro ? 'Pro' : 'Free' });
 }
 
 async function generateImage(prompt: string) {
@@ -304,4 +407,48 @@ async function generateImage(prompt: string) {
   }
 
   return imageUrl ? { imageUrl } : null;
+}
+
+async function webSearch(query: string) {
+  if (!process.env.TAVILY_API_KEY) {
+    return { answer: '', results: [] as Array<{ title: string; snippet: string; url: string }> };
+  }
+
+  const response = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.TAVILY_API_KEY}`,
+    },
+    body: JSON.stringify({ query }),
+  });
+
+  const payload = await response.json().catch(() => ({} as any));
+  if (!response.ok) {
+    console.error('[webSearch] failed', response.status, payload);
+    return { answer: '', results: [] };
+  }
+
+  const answer = typeof payload.answer === 'string' ? payload.answer : '';
+  const rawResults = Array.isArray(payload.results)
+    ? payload.results
+    : Array.isArray(payload.data)
+    ? payload.data
+    : [];
+
+  const results = rawResults
+    .filter((item: any) => item && typeof item === 'object')
+    .map((item: any) => ({
+      title: typeof item.title === 'string' ? item.title : typeof item.heading === 'string' ? item.heading : 'Search result',
+      snippet:
+        typeof item.snippet === 'string'
+          ? item.snippet
+          : typeof item.description === 'string'
+          ? item.description
+          : '',
+      url: typeof item.url === 'string' ? item.url : typeof item.link === 'string' ? item.link : '',
+    }))
+    .filter((item: any) => item.url);
+
+  return { answer, results };
 }

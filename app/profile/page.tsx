@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { buildWimpyIDLoginUrl } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
@@ -292,6 +293,23 @@ export default function ProfilePage() {
             <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
               <p className="text-sm font-medium">Data controls</p>
               <p className="mt-1 text-sm text-[var(--muted)]">Export your profile and settings at any time. Everything is stored locally in this browser for now.</p>
+            </div>
+            <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
+              <p className="text-sm font-medium">Legal pages</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <Link href="/terms" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
+                  Terms of Service
+                </Link>
+                <Link href="/policy" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
+                  Privacy Policy
+                </Link>
+                <Link href="/security" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
+                  Security
+                </Link>
+                <Link href="/disclaimer" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
+                  Disclaimer
+                </Link>
+              </div>
             </div>
             <div className="mt-4 flex items-center gap-2 text-sm text-[var(--muted)]">
               <UserCircle2 size={14} />

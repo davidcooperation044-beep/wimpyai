@@ -51,6 +51,12 @@ type SettingsState = {
   compactMode: boolean;
 };
 
+type QuotaState = {
+  limit: number;
+  remaining: number;
+  resetsAt: string;
+};
+
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
@@ -148,11 +154,13 @@ async function fetchUserConversations(userId: string): Promise<Conversation[] | 
   const messagesByConversation = messagesData.reduce<Record<string, Message[]>>((acc, message: any) => {
     const conversationId = message.conversation_id;
     if (!acc[conversationId]) acc[conversationId] = [];
+    const images = Array.isArray(message.images) ? message.images : [];
     acc[conversationId].push({
       id: message.id,
       role: message.role as MessageRole,
       content: message.content,
-      images: Array.isArray(message.images) ? message.images : [],
+      images,
+      imageUrl: message.role === 'assistant' && images.length === 1 ? images[0] : undefined,
     });
     return acc;
   }, {});
@@ -178,6 +186,11 @@ async function persistConversationToSupabase(conversation: Conversation, userId:
 
 async function persistMessageToSupabase(conversationId: string, message: Message, userId: string) {
   if (!userId) return;
+  const images = message.images ?? [];
+  if (!images.length && message.imageUrl) {
+    images.push(message.imageUrl);
+  }
+
   await supabase.from('wai_messages').upsert(
     {
       id: message.id,
@@ -185,7 +198,7 @@ async function persistMessageToSupabase(conversationId: string, message: Message
       user_id: userId,
       role: message.role,
       content: message.content,
-      images: message.images ?? [],
+      images,
     },
     { onConflict: 'id' }
   );
@@ -199,6 +212,23 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token;
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function getInitialQuotaState(authHeaders: Record<string, string>) {
+  const response = await fetch('/api/chat', {
+    method: 'GET',
+    headers: {
+      ...authHeaders,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const body = await response.json().catch(() => null);
+  return body?.quota ?? null;
 }
 
 export default function HomePage() {
@@ -223,6 +253,8 @@ export default function HomePage() {
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [quotaState, setQuotaState] = useState<QuotaState | null>(null);
+  const [quotaError, setQuotaError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -257,6 +289,25 @@ export default function HomePage() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
+  }, []);
+
+  useEffect(() => {
+    const loadQuota = async () => {
+      try {
+        const authHeaders = await getAuthHeaders();
+        const quota = await getInitialQuotaState(authHeaders);
+        if (quota) {
+          setQuotaState(quota);
+          setQuotaError(null);
+        } else {
+          setQuotaError('Unable to load quota status.');
+        }
+      } catch {
+        setQuotaError('Unable to load quota status.');
+      }
+    };
+
+    void loadQuota();
   }, []);
 
   useEffect(() => {
@@ -627,21 +678,35 @@ export default function HomePage() {
       if (!response.ok) {
         // Try to surface server-provided error details in the assistant bubble
         let bodyText = '';
+        let parsed: any = null;
         try {
           bodyText = await response.text();
-          const parsed = JSON.parse(bodyText);
+          parsed = JSON.parse(bodyText);
           bodyText = parsed?.error ? (parsed.detail ? `${parsed.error}: ${parsed.detail}` : parsed.error) : bodyText;
         } catch {
           // ignore parse error, use raw text
         }
 
+        if (parsed?.error === 'quota-exceeded') {
+          const quota = parsed?.quota;
+          if (quota) {
+            setQuotaState(quota);
+          }
+          if (profile.isConnected) {
+            setShowUpgradeModal(true);
+          } else {
+            setShowAuthModal(true);
+          }
+        }
+
+        const finalMessage = bodyText || 'Unable to reach the chat API.';
         setConversations((prev) =>
           prev.map((conversation) =>
             conversation.id === activeConversationId
               ? {
                   ...conversation,
                   messages: conversation.messages.map((message) =>
-                    message.id === assistantMessage.id ? { ...message, content: bodyText || 'Unable to reach the chat API.' } : message
+                    message.id === assistantMessage.id ? { ...message, content: finalMessage } : message
                   ),
                 }
               : conversation
@@ -654,7 +719,7 @@ export default function HomePage() {
               conversations.find((conversation) => conversation.id === activeConversationId) ?? conversationToPersist,
               profile.userId
             );
-            await updateMessageContentInSupabase(assistantMessage.id, bodyText || 'Unable to reach the chat API.');
+            await updateMessageContentInSupabase(assistantMessage.id, finalMessage);
           } catch (e) {
             console.error('Failed to persist error state', e);
           }
@@ -671,6 +736,7 @@ export default function HomePage() {
       const decoder = new TextDecoder();
       let buffer = '';
       let accumulated = '';
+      let lastImageUrl = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -706,8 +772,15 @@ export default function HomePage() {
               break;
             }
 
+            if (parsed.quota) {
+              setQuotaState(parsed.quota);
+            }
+
             const delta = parsed.delta || '';
             const imageUrl = parsed.imageUrl || '';
+            if (imageUrl) {
+              lastImageUrl = imageUrl;
+            }
             if (delta) {
               accumulated += delta;
             }
@@ -734,6 +807,18 @@ export default function HomePage() {
           } catch (error) {
             // ignore malformed chunk
           }
+        }
+      }
+
+      if (profile.isConnected && profile.userId) {
+        try {
+          await persistMessageToSupabase(conversationToPersist.id, {
+            ...assistantMessage,
+            content: accumulated || 'No assistant response was returned.',
+            images: lastImageUrl ? [lastImageUrl] : assistantMessage.images,
+          }, profile.userId);
+        } catch (e) {
+          console.error('Failed to persist assistant response', e);
         }
       }
     } catch (error) {
@@ -818,6 +903,13 @@ export default function HomePage() {
   const handleSubscriptionSuccess = () => {
     setProfile((prev) => ({ ...prev, plan: 'Pro', subscriptionStatus: 'active' }));
     showToast('WimpyAI Pro is now active!');
+    void (async () => {
+      const authHeaders = await getAuthHeaders();
+      const quota = await getInitialQuotaState(authHeaders);
+      if (quota) {
+        setQuotaState(quota);
+      }
+    })();
   };
 
   const handleExportData = () => {
@@ -1041,6 +1133,38 @@ export default function HomePage() {
                 </div>
               </div>
 
+              <div className="rounded-3xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">Token quota</p>
+                    <p className="text-xs text-[var(--muted)]">
+                      {quotaState
+                        ? `${quotaState.remaining.toLocaleString()} of ${quotaState.limit.toLocaleString()} remaining`
+                        : 'Loading usage status...'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-2xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                    onClick={handleSubscriptionToggle}
+                  >
+                    {profile.plan === 'Pro' ? 'Manage Pro' : 'Upgrade to Pro'}
+                  </button>
+                </div>
+                {quotaState ? (
+                  <div className="mt-4">
+                    <div className="h-2 overflow-hidden rounded-full bg-[var(--border)]">
+                      <div
+                        className="h-full rounded-full bg-[var(--accent)]"
+                        style={{ width: `${Math.max(0, Math.min(100, ((quotaState.limit - quotaState.remaining) / quotaState.limit) * 100))}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-xs text-[var(--muted)]">Resets {new Date(quotaState.resetsAt).toLocaleString()}</p>
+                  </div>
+                ) : null}
+                {quotaError ? <p className="mt-3 text-sm text-red-500">{quotaError}</p> : null}
+              </div>
+
               <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-black/5">
                 <div
                   ref={chatContainerRef}
@@ -1086,8 +1210,15 @@ export default function HomePage() {
                             </div>
                           ) : null}
                           <div className={`relative max-w-[85%] rounded-3xl px-4 py-3 ${isUser ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel-strong)] text-[var(--ink)]'}`}>
+                                            {message.images?.length ? (
+                              <div className="mb-3 grid gap-3 sm:grid-cols-2">
+                                {message.images.map((src, imageIndex) => (
+                                  <img key={`${src}-${imageIndex}`} src={src} alt="Attached content" className="max-h-64 rounded-xl object-cover" />
+                                ))}
+                              </div>
+                            ) : null}
                             {message.image ? <img src={message.image} alt="Uploaded content" className="mb-3 max-h-64 rounded-xl object-cover" /> : null}
-                            {message.imageUrl ? <img src={message.imageUrl} alt="Generated content" className="mb-3 max-h-80 rounded-xl object-cover" /> : null}
+                            {!message.images?.length && message.imageUrl ? <img src={message.imageUrl} alt="Generated content" className="mb-3 max-h-80 rounded-xl object-cover" /> : null}
                             {message.role === 'assistant' ? (
                               <div className="prose prose-sm max-w-none text-[var(--ink)]">
                                 <ReactMarkdown
