@@ -297,18 +297,18 @@ export default function ProfilePage() {
             <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel-strong)] p-4">
               <p className="text-sm font-medium">Legal pages</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <Link href="/terms" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
+                <a href="/terms" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
                   Terms of Service
-                </Link>
-                <Link href="/policy" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
+                </a>
+                <a href="/policy" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
                   Privacy Policy
-                </Link>
-                <Link href="/security" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
+                </a>
+                <a href="/security" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
                   Security
-                </Link>
-                <Link href="/disclaimer" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
+                </a>
+                <a href="/disclaimer" className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm font-medium text-[var(--ink)] hover:bg-[var(--panel)]">
                   Disclaimer
-                </Link>
+                </a>
               </div>
             </div>
             <div className="mt-4 flex items-center gap-2 text-sm text-[var(--muted)]">
