@@ -247,7 +247,13 @@ export async function POST(req: NextRequest) {
         if (resolvedToolCalls.length > 0) {
           finalMessages = [
             ...baseMessages,
-            { role: 'assistant', content: null, tool_calls: resolvedToolCalls },
+            // Some providers behind OpenRouter (this one included) reject
+            // `content: null` on an assistant tool-call message with a
+            // "expected a string, got null" 400 error, even though OpenAI's
+            // own spec allows null here. Use '' instead — functionally
+            // equivalent (no text alongside the tool call), but satisfies
+            // the stricter validation.
+            { role: 'assistant', content: '', tool_calls: resolvedToolCalls },
             ...toolResponses,
           ];
         }
