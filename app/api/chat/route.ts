@@ -304,6 +304,7 @@ export async function POST(req: NextRequest) {
     });
 
     return new Response(errorStream, {
+      status: 502,
       headers: {
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
